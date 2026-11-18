@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141110">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="description" content="MVK（Marxist Vampire Killers）d20 骰池检定模拟器：3D 骰子动画、成功数判定结论、通用掷骰、手机摇一摇掷骰（DeviceMotion）。">
+<title>骰子模拟器 · MVK 骰池工具</title>
+<style>
+:root{
+  --bg:#141110; --panel:#1d1918; --panel2:#282120; --line:#3d2f2e;
+  --fg:#efe6dd; --dim:#a3938a; --red:#e5484d; --red-dim:#8f2d31;
+  --gold:#e8b34b; --green:#4cc47f; --amber:#e0a03c;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  min-height:100vh;min-height:100dvh;
+  overscroll-behavior:none;touch-action:manipulation;
+  -webkit-user-select:none;user-select:none;
+}
+input,select{-webkit-user-select:auto;user-select:auto}
+button{font-family:inherit;cursor:pointer}
+
+/* ---------- header ---------- */
+header.app{
+  position:sticky;top:0;z-index:30;
+  background:linear-gradient(#1b1512,#141110f5);
+  border-bottom:1px solid var(--line);
+  padding:10px 14px;display:flex;align-items:center;gap:10px;
+}
+.logo{color:var(--red);font-size:20px;line-height:1}
+h1{font-size:16px;margin:0;font-weight:800;letter-spacing:.5px}
+h1 small{display:block;font-size:10.5px;color:var(--dim);font-weight:400;letter-spacing:1px;margin-top:1px}
+.hspace{flex:1}
+.hbtn{
+  border:1px solid var(--line);background:var(--panel);color:var(--dim);
+  border-radius:10px;padding:7px 11px;font-size:12.5px;white-space:nowrap;
+}
+.hbtn.on{color:var(--gold);border-color:#6e5a2c;background:#241d12}
+
+/* ---------- shake strip ---------- */
+.shakebar{display:none;padding:9px 14px;border-bottom:1px solid var(--line);background:#191413;
+  align-items:center;gap:10px;font-size:12px;color:var(--dim);flex-wrap:wrap}
+.shakebar.on{display:flex}
+.meter{flex:1;min-width:110px;height:6px;background:#2a2322;border-radius:3px;overflow:hidden}
+.meter i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--amber),var(--red));transition:width .09s linear}
+.senswrap{display:flex;align-items:center;gap:6px}
+.senswrap input[type=range]{width:110px;accent-color:var(--red)}
+#shakeStatus{width:100%;font-size:11.5px;line-height:1.5}
+#shakeStatus.warn{color:var(--amber)}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:8px;padding:12px 14px 0;max-width:780px;margin:0 auto}
+.tab{flex:1;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  color:var(--dim);font-size:13.5px;font-weight:600;text-align:center}
+.tab.on{color:var(--fg);border-color:var(--red-dim);background:#2a1b1c;box-shadow:inset 0 0 0 1px var(--red-dim)}
+
+/* ---------- panels ---------- */
+.panel{padding:12px 14px 130px;max-width:780px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px}
+.field{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+.field label{font-size:11px;color:var(--dim);display:block;margin-bottom:6px;line-height:1.4}
+.stp{display:flex;align-items:center;gap:6px}
+.stp button{width:32px;height:32px;flex:none;border-radius:9px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--fg);font-size:17px;line-height:1}
+.stp button:active{background:#33292a}
+.stp input{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+  border-radius:9px;height:32px;text-align:center;font-size:16px;font-weight:700}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+.note{font-size:11px;color:var(--dim);margin:10px 2px 0;line-height:1.7}
+.note b{color:#cf7d80;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.chip{padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel);
+  color:var(--dim);font-size:12px}
+.chip:active{background:#2a2122;color:var(--fg)}
+.ck{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);margin-top:10px}
+.ck input{accent-color:var(--red);width:16px;height:16px}
+
+/* ---------- dice tray ---------- */
+.tray{
+  min-height:170px;display:flex;flex-wrap:wrap;gap:16px 14px;align-items:center;justify-content:center;
+  padding:20px 10px;margin-top:12px;border-radius:14px;border:1px dashed var(--line);
+  background:radial-gradient(ellipse at 50% 28%,#261a19 0%,#171211 72%);
+}
+.tray .empty{color:#6b5c55;font-size:12.5px}
+.diecell{display:flex;flex-direction:column;align-items:center;gap:7px}
+.die{--s:70px;width:var(--s);height:var(--s);position:relative;perspective:540px}
+.die.md{--s:58px}.die.sm{--s:48px}.die.xs{--s:40px}
+@media (max-width:480px){
+  .die{--s:58px}.die.md{--s:50px}.die.sm{--s:42px}.die.xs{--s:34px}
+}
+.cube{position:absolute;inset:0;transform-style:preserve-3d}
+.face{
+  position:absolute;width:var(--s);height:var(--s);border-radius:15%;
+  display:flex;align-items:center;justify-content:center;
+  backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.07),inset 0 -7px 12px rgba(0,0,0,.5),inset 0 5px 9px rgba(255,255,255,.09);
+}
+.f-front {transform:translateZ(calc(var(--s)/2))}
+.f-back  {transform:rotateY(180deg) translateZ(calc(var(--s)/2))}
+.f-right {transform:rotateY(90deg)  translateZ(calc(var(--s)/2))}
+.f-left  {transform:rotateY(-90deg) translateZ(calc(var(--s)/2))}
+.f-top   {transform:rotateX(90deg)  translateZ(calc(var(--s)/2))}
+.f-bottom{transform:rotateX(-90deg) translateZ(calc(var(--s)/2))}
+.die.pool .face,.die.gen .face{background:linear-gradient(150deg,#312928,#1a1514)}
+.die.pool .num{color:#ff6f72}
+.die.gen .num{color:#ff9d7a}
+.die.kap .face{background:linear-gradient(150deg,#3a2d19,#221a0e);
+  box-shadow:inset 0 0 0 1.5px rgba(232,179,75,.4),inset 0 -7px 12px rgba(0,0,0,.55),inset 0 5px 9px rgba(255,215,130,.14)}
+.die.kap .num{color:var(--gold)}
+.die.d6 .face{background:linear-gradient(150deg,#f6f1e7,#d8d0c0)}
+.num{font-size:calc(var(--s)*.42);font-weight:800;line-height:1}
+.num.small{font-size:calc(var(--s)*.3)}
+.pips{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);width:76%;height:76%}
+.pips i{border-radius:50%;margin:14%}
+.pips i.on{background:#231b18;box-shadow:inset 0 -1px 1px rgba(255,255,255,.55),0 1px 1px rgba(255,255,255,.25)}
+.die.settle{animation:settle .18s ease-out}
+@keyframes settle{0%{transform:translateY(-4px) scale(1.06)}100%{transform:translateY(0) scale(1)}}
+.tag{font-size:12px;font-weight:700;min-height:16px;white-space:nowrap}
+.tag b{font-weight:800}
+.tag .tk{margin-right:2px}
+.t-ok{color:var(--green)} .t-s20{color:var(--gold)} .t-f1{color:#ff5256} .t-short{color:var(--amber)} .t-plain{color:var(--dim)}
+.morechip{padding:6px 10px;border:1px dashed var(--line);border-radius:10px;color:var(--dim);font-size:12px}
+
+/* ---------- result ---------- */
+.res{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 15px}
+.sumline{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.big{font-size:36px;font-weight:800;line-height:1;color:var(--fg)}
+.unit{color:var(--dim);font-size:13px}
+.bonustag{color:var(--gold);font-size:13px;font-weight:700}
+.modline{margin-top:6px;font-size:12px;color:var(--dim)}
+.verdict{margin-top:10px;padding:11px 13px;border-radius:11px;font-size:15px;font-weight:800;letter-spacing:.5px}
+.verdict.ok{background:#122e1f;color:var(--green);border:1px solid #1e5c3a}
+.verdict.fail{background:#3a1416;color:#ff8084;border:1px solid #6e2427}
+.verdict.info{background:#2a2117;color:var(--gold);border:1px solid #6e5a2c}
+.notes{margin-top:9px;font-size:12px;color:var(--dim);line-height:1.9}
+.vals{margin-top:8px;font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:13px;color:#cbb9ae;line-height:2;word-break:break-all}
+.gerr{color:#ff8084;font-size:12.5px;margin-top:8px;display:none}
+
+/* ---------- generic panel ---------- */
+.notation{
+  width:100%;background:var(--panel);border:1px solid var(--line);color:var(--fg);
+  border-radius:12px;padding:12px 14px;font-size:16px;font-weight:600;
+  font-family:ui-monospace,Consolas,monospace;letter-spacing:1px;
+}
+.notation:focus{outline:none;border-color:var(--red-dim)}
+.qdie{padding:7px 12px}
+
+/* ---------- history ---------- */
+.hist{margin-top:16px}
+.hist h3{font-size:12.5px;color:var(--dim);margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;font-weight:600}
+.hist h3 button{border:none;background:none;color:var(--dim);font-size:11.5px;padding:4px 6px}
+.hist ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.hist li{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 11px;
+  font-size:12px;color:var(--dim);display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;line-height:1.6}
+.hist .ht{color:#6b5c55;font-size:11px}
+.hist b{color:var(--fg)}
+.hist .hv{font-family:ui-monospace,Consolas,monospace;word-break:break-all}
+.r-ok{color:var(--green);font-weight:700}.r-fail{color:#ff8084;font-weight:700}.r-info{color:var(--gold);font-weight:700}
+
+/* ---------- action bar ---------- */
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:40;
+  padding:10px 14px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(#14111000,#141110f0 42%,#141110);}
+.rollbtn{
+  width:100%;max-width:760px;display:block;margin:0 auto;padding:15px;border-radius:15px;border:none;
+  background:linear-gradient(180deg,#e85156,#b93438);color:#fff;font-size:17px;font-weight:800;
+  letter-spacing:3px;box-shadow:0 8px 22px rgba(229,72,77,.32);
+}
+.rollbtn:active{transform:translateY(1px)}
+.rollbtn:disabled{filter:grayscale(.65);opacity:.65;box-shadow:none}
+.barhint{max-width:760px;margin:7px auto 0;text-align:center;font-size:10.5px;color:#6b5c55;line-height:1.6}
+</style>
+</head>
+<body>
+
+<header class="app">
+  <span class="logo">★</span>
+  <h1>骰子模拟器<small>MVK 骰池 · 通用掷骰 · 摇一摇</small></h1>
+  <span class="hspace"></span>
+  <button class="hbtn" id="btnSound" type="button">🔊 音效</button>
+  <button class="hbtn" id="btnShake" type="button">📳 摇一摇</button>
+</header>
+
+<div class="shakebar" id="shakebar">
+  <span>灵敏度</span>
+  <div class="senswrap">
+    <input type="range" id="sens" min="8" max="40" step="1" value="16">
+    <span id="sensVal">16</span>
+  </div>
+  <div class="meter"><i id="meterFill"></i></div>
+  <div id="shakeStatus">未启用</div>
+</div>
+
+<div class="tabs">
+  <button class="tab on" id="tabPool" type="button">骰池检定（MVK）</button>
+  <button class="tab" id="tabGen" type="button">通用掷骰</button>
+</div>
+
+<!-- ================= 骰池检定 ================= -->
+<section class="panel" id="panelPool">
+  <div class="grid">
+    <div class="field"><label>骰池数量（自己 1 + SC + KAPITAL）</label>
+      <div class="stp" id="stpPool"><button class="minus" type="button">−</button><input type="number" inputmode="numeric" min="1" max="16" value="5"><button class="plus" type="button">＋</button></div>
+    </div>
+    <div class="field"><label>💰 KAPITAL 骰数量</label>
+      <div class="stp" id="stpKap"><button class="minus" type="button">−</button><input type="number" inputmode="numeric" min="0" max="6" value="0"><button class="plus" type="button">＋</button></div>
+    </div>
+    <div class="field"><label>能力修正（加到每颗骰上）</label>
+      <div class="stp" id="stpAbility"><button class="minus" type="button">−</button><input type="number" inputmode="numeric" min="-10" max="20" value="0"><button class="plus" type="button">＋</button></div>
+    </div>
+    <div class="field"><label>装备 / 武器修正</label>
+      <div class="stp" id="stpGear"><button class="minus" type="button">−</button><input type="number" inputmode="numeric" min="-10" max="20" value="0"><button class="plus" type="button">＋</button></div>
+    </div>
+    <div class="field"><label>需要成功数（0 = 只统计）</label>
+      <div class="stp" id="stpNeed"><button class="minus" type="button">−</button><input type="number" inputmode="numeric" min="0" max="10" value="1"><button class="plus" type="button">＋</button></div>
+    </div>
+  </div>
+
+  <label class="ck"><input type="checkbox" id="kapDirect"> CLASS 检定模式：💰 KAPITAL 成功直接计入成功数（而非 BONUS）</label>
+
+  <div class="chips">
+    <button class="chip" data-preset="default" type="button">默认开局 5 骰</button>
+    <button class="chip" data-preset="class" type="button">CLASS 检定</button>
+    <button class="chip" data-preset="scary" type="button">创伤 SCARY · 需2</button>
+    <button class="chip" data-preset="shock" type="button">SHOCKING · 需3</button>
+    <button class="chip" data-preset="horror" type="button">HORRIFYING · 需4</button>
+  </div>
+
+  <p class="note">单骰规则：<b>骰值 + 能力 + 装备 ≥ 20</b> → 1 个成功 · <b>Nat 1</b> 无条件失败不可转化 · <b>Nat 20</b> 无条件成功（无视能力，p.91）<br>
+  GM 只说「掷个骰」，不指定能力——掷完再决定成功"是什么"（p.91）。</p>
+
+  <div class="tray" id="poolTray"><span class="empty">设置参数后，按下方「掷骰」</span></div>
+
+  <div class="res" id="poolRes" aria-live="polite" style="display:none">
+    <div class="sumline"><span class="big" id="pBig">0</span><span class="unit">个成功</span><span class="bonustag" id="pBonus"></span></div>
+    <div class="modline" id="pMod"></div>
+    <div class="verdict" id="pVerdict"></div>
+    <div class="notes" id="pNotes"></div>
+    <div class="vals" id="pVals"></div>
+  </div>
+
+  <div class="hist">
+    <h3>掷骰记录 <button id="histClear" type="button">清空</button></h3>
+    <ul id="histList"></ul>
+  </div>
+</section>
+
+<!-- ================= 通用掷骰 ================= -->
+<section class="panel" id="panelGen" style="display:none">
+  <input class="notation" id="notation" type="text" inputmode="text" placeholder="骰子表达式，如 2d6+1d4+3 或 1d20" value="1d20">
+  <div class="chips">
+    <button class="chip qdie" data-add="d4" type="button">+1d4</button>
+    <button class="chip qdie" data-add="d6" type="button">+1d6</button>
+    <button class="chip qdie" data-add="d8" type="button">+1d8</button>
+    <button class="chip qdie" data-add="d10" type="button">+1d10</button>
+    <button class="chip qdie" data-add="d12" type="button">+1d12</button>
+    <button class="chip qdie" data-add="d20" type="button">+1d20</button>
+    <button class="chip qdie" data-add="d100" type="button">+1d100</button>
+    <button class="chip qdie" data-add="clr" type="button">清空</button>
+  </div>
+
+  <div class="grid" style="margin-top:10px">
+    <div class="field"><label>结论判定：总点数与目标比较（留空 = 只计和）</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="optOp" style="flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:9px;height:34px;font-size:16px">
+          <option value="">不判定</option>
+          <option value=">=">≥ 大于等于</option>
+          <option value=">">&gt; 大于</option>
+          <option value="<=">≤ 小于等于</option>
+          <option value="<">&lt; 小于</option>
+          <option value="==">= 等于</option>
+        </select>
+        <input id="optVal" type="number" inputmode="numeric" style="flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:9px;height:34px;text-align:center;font-size:16px" placeholder="目标值">
+      </div>
+    </div>
+  </div>
+
+  <div class="tray" id="genTray"><span class="empty">输入表达式后按下方「掷骰」</span></div>
+
+  <div class="res" id="genRes" aria-live="polite" style="display:none">
+    <div class="sumline"><span class="big" id="gBig">0</span><span class="unit">总点数</span><span class="unit" id="gAvg"></span></div>
+    <div class="verdict" id="gVerdict" style="display:none"></div>
+    <div class="vals" id="gVals"></div>
+  </div>
+</section>
+
+<div class="bar">
+  <button class="rollbtn" id="rollBtn" type="button">掷　骰</button>
+  <div class="barhint">桌面端：点击按钮或按 空格键 掷骰 · 手机端：点右上角「摇一摇」授权后，甩动手机即可掷骰<br>⚠ 运动传感器需要 HTTPS（或 localhost）环境，本地双击打开文件无法使用摇一摇</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $=function(s){return document.querySelector(s);};
+
+/* ================= 随机数（crypto 均匀分布） ================= */
+function rnd(max){ // 均匀返回 1..max
+  var buf=new Uint32Array(1);
+  var limit=Math.floor(4294967296/max)*max, v;
+  do{ crypto.getRandomValues(buf); v=buf[0]; }while(v>=limit);
+  return (v%max)+1;
+}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
+/* ================= 音效（WebAudio 合成，无外部资源） ================= */
+var AC=null, muted=false;
+function ensureAC(){
+  if(muted) return null;
+  if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
+  if(AC && AC.state==='suspended') AC.resume();
+  return AC;
+}
+function clack(vol){ // 骰子落桌的"嗒"声
+  var ctx=ensureAC(); if(!ctx) return;
+  var t=ctx.currentTime;
+  var o=ctx.createOscillator(), g=ctx.createGain();
+  o.type='triangle';
+  o.frequency.setValueAtTime(150+Math.random()*160, t);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.15*vol, t+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.11);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t+0.13);
+}
+document.addEventListener('visibilitychange',function(){ if(!document.hidden && AC && AC.state==='suspended') AC.resume(); });
+
+/* ================= 步进器 ================= */
+function stepper(rootId,min,max,onChange){
+  var root=document.getElementById(rootId);
+  var input=root.querySelector('input');
+  function get(){ var v=parseInt(input.value,10); if(isNaN(v)) v=min; return clamp(v,min,max); }
+  function set(v){ input.value=clamp(v,min,max); saveCfg(); if(onChange)onChange(); }
+  root.querySelector('.minus').addEventListener('click',function(){ set(get()-1); });
+  root.querySelector('.plus').addEventListener('click',function(){ set(get()+1); });
+  input.addEventListener('change',function(){ set(get()); });
+  input.addEventListener('input',function(){ if(onChange)onChange(); });
+  return {get:get,set:set};
+}
+
+/* ================= 3D 骰子 ================= */
+var PIPS={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
+function makeDie(sides,klass){
+  var el=document.createElement('div'); el.className='die '+klass+(sides===6?' d6':'');
+  var cube=document.createElement('div'); cube.className='cube'; el.appendChild(cube);
+  var names=['front','right','top','back','left','bottom'];
+  var faces=names.map(function(n){
+    var f=document.createElement('div'); f.className='face f-'+n; cube.appendChild(f); return f;
+  });
+  var kind = (sides===6)?'pip':'num';
+  faces.forEach(function(f){
+    if(kind==='pip'){
+      var p=document.createElement('div'); p.className='pips';
+      for(var i=0;i<9;i++) p.appendChild(document.createElement('i'));
+      f.appendChild(p);
+    }else{
+      var s=document.createElement('span'); s.className='num'; f.appendChild(s);
+    }
+  });
+  return {
+    el:el, cube:cube, faces:faces, kind:kind, sides:sides, result:null, tag:null,
+    pose:{x:-(14+Math.random()*8), y:(16+Math.random()*14)}
+  };
+}
+function setFaceValue(d,fi,v){
+  var f=d.faces[fi];
+  if(d.kind==='pip'){
+    var cells=f.querySelectorAll('.pips i'), on=PIPS[clamp(v,1,6)];
+    for(var i=0;i<9;i++) cells[i].className = (on.indexOf(i)>=0)?'on':'';
+  }else{
+    var s=f.firstChild;
+    s.textContent=v;
+    s.className='num'+(v>=100?' small':'');
+  }
+}
+function randomizeFaces(d){
+  for(var i=0;i<6;i++) setFaceValue(d,i,rnd(d.sides));
+}
+
+/* --- 掷骰动画：CSS transition 多轴翻滚 + 落定回弹 --- */
+var rollSeq=0, rolling=false, lastPower=null;
+function tumble(d,dur,delay,power,seq,cb){
+  var turns=1+Math.floor(Math.random()*2)+power;
+  var ax=turns+(Math.random()<0.4?1:0);
+  var ay=turns+(Math.random()<0.4?1:0);
+  var az=power>1?1:0;
+  d.el.classList.remove('settle');
+  d.cube.style.transition='none';
+  d.cube.style.transform='rotateX('+d.pose.x+'deg) rotateY('+d.pose.y+'deg)';
+  void d.cube.offsetWidth; // 强制回流，确保过渡生效
+  setTimeout(function(){
+    if(seq!==rollSeq) return;
+    randomizeFaces(d);
+    d.cube.style.transition='transform '+dur+'ms cubic-bezier(.16,.8,.24,1)';
+    d.cube.style.transform='rotateX('+(d.pose.x+360*ax)+'deg) rotateY('+(d.pose.y+360*ay)+'deg) rotateZ('+(360*az)+'deg)';
+  },delay);
+  setTimeout(function(){ if(seq===rollSeq) setFaceValue(d,0,d.result); }, delay+Math.round(dur*0.45));
+  setTimeout(function(){
+    if(seq!==rollSeq) return;
+    setFaceValue(d,1,rnd(d.sides));
+    setFaceValue(d,4,rnd(d.sides));
+    d.el.classList.add('settle');
+    clack(0.55+power*0.15);
+    if(cb)cb();
+  },delay+dur);
+}
+function animateDice(dice,power,done){
+  var seq=++rollSeq, maxEnd=0;
+  dice.forEach(function(d,i){
+    var dur=1400+Math.round(Math.random()*400)+power*360;
+    var delay=i*95;
+    maxEnd=Math.max(maxEnd,delay+dur);
+    tumble(d,dur,delay,power,seq);
+  });
+  setTimeout(function(){ if(seq===rollSeq && done) done(); }, maxEnd+60);
+}
+function renderTray(trayEl,items){
+  trayEl.innerHTML='';
+  if(!items.length){ trayEl.innerHTML='<span class="empty">没有可掷的骰子</span>'; return []; }
+  var n=items.length;
+  var sizeCls = n<=5?'':(n<=9?'md':(n<=14?'sm':'xs'));
+  var dice=[];
+  items.forEach(function(it){
+    var cell=document.createElement('div'); cell.className='diecell';
+    var d=makeDie(it.sides,it.klass);
+    if(sizeCls) d.el.classList.add(sizeCls);
+    d.result=it.result;
+    var tag=document.createElement('div'); tag.className='tag'; d.tag=tag;
+    cell.appendChild(d.el); cell.appendChild(tag); trayEl.appendChild(cell);
+    randomizeFaces(d); setFaceValue(d,0,it.result); // 首帧就有内容
+    dice.push(d);
+  });
+  return dice;
+}
+
+/* ================= 配置持久化 ================= */
+var stpPool,stpKap,stpAbility,stpGear,stpNeed;
+var notationEl=$('#notation'), optOpEl=$('#optOp'), optValEl=$('#optVal');
+var kapDirectEl=$('#kapDirect'), sensEl=$('#sens'), sensValEl=$('#sensVal');
+var LS='mvk_dice_v1';
+function saveCfg(){
+  try{
+    localStorage.setItem(LS,JSON.stringify({
+      n:stpPool.get(),k:stpKap.get(),ab:stpAbility.get(),gear:stpGear.get(),need:stpNeed.get(),
+      kapDirect:kapDirectEl.checked,notation:notationEl.value,op:optOpEl.value,target:optValEl.value,
+      sens:sensEl.value,muted:muted
+    }));
+  }catch(e){}
+}
+function loadCfg(){
+  try{
+    var c=JSON.parse(localStorage.getItem(LS)||'null'); if(!c) return;
+    stpPool.set(c.n); stpKap.set(c.k); stpAbility.set(c.ab); stpGear.set(c.gear); stpNeed.set(c.need==null?1:c.need);
+    kapDirectEl.checked=!!c.kapDirect;
+    if(c.notation) notationEl.value=c.notation;
+    if(c.op) optOpEl.value=c.op;
+    if(c.target!=null&&c.target!=='') optValEl.value=c.target;
+    if(c.sens){ sensEl.value=c.sens; sensValEl.textContent=c.sens; }
+    if(c.muted){ muted=true; $('#btnSound').textContent='🔇 静音'; }
+  }catch(e){}
+}
+
+/* ================= MVK 骰池 ================= */
+var rollBtn=$('#rollBtn'), poolTray=$('#poolTray'), poolRes=$('#poolRes');
+function fmtMod(m){ return m>=0?('+'+m):(''+m); }
+function readPoolCfg(){
+  return {n:stpPool.get(),k:stpKap.get(),ab:stpAbility.get(),gear:stpGear.get(),need:stpNeed.get(),
+          kapDirect:kapDirectEl.checked};
+}
+function rollPool(){
+  var cfg=readPoolCfg();
+  var results=[];
+  var i;
+  for(i=0;i<cfg.n;i++) results.push({v:rnd(20),kap:false});
+  for(i=0;i<cfg.k;i++) results.push({v:rnd(20),kap:true});
+  if(!results.length){ poolTray.innerHTML='<span class="empty">骰池为空</span>'; return; }
+
+  var items=results.map(function(r){ return {sides:20,klass:r.kap?'kap':'pool',result:r.v}; });
+  var dice=renderTray(poolTray,items);
+  results.forEach(function(r,i){ r.tag=dice[i].tag; }); // 把骰子下的标签关联回结果对象
+
+  rolling=true; rollBtn.disabled=true;
+  var power = (lastPower!=null)?lastPower:(Math.random()<0.5?0:1); lastPower=null;
+  animateDice(dice,power,function(){
+    try{ evaluatePool(results,cfg); }
+    finally{ // 即使结论渲染出错也必须解除掷骰锁
+      rolling=false; rollBtn.disabled=false;
+      updateRollLabel();
+    }
+  });
+}
+function evaluatePool(results,cfg){
+  var mod=cfg.ab+cfg.gear, succ=0, kapSucc=0, nat20=0, nat1=0, shorts=[], vals=[];
+  results.forEach(function(r){
+    var st,ok=false;
+    if(r.v===20){ st='s20'; ok=true; nat20++; }
+    else if(r.v===1){ st='f1'; nat1++; }
+    else if(r.v+mod>=20){ st='ok'; ok=true; }
+    else { st='short'; shorts.push(20-(r.v+mod)); }
+    if(ok){ if(r.kap && !cfg.kapDirect) kapSucc++; else succ++; }
+    vals.push((r.kap?'💰':'')+r.v+(st==='s20'?'⭐':st==='f1'?'☠':''));
+    var cls = st==='s20'?'t-s20':st==='f1'?'t-f1':st==='ok'?'t-ok':'t-short';
+    var label;
+    if(st==='s20') label='<b class="tk">💰</b><b class="t-s20">'+r.v+' ⭐</b>';
+    else if(st==='f1') label=(r.kap?'<b class="tk">💰</b>':'')+'<b class="t-f1">'+r.v+' ☠</b>';
+    else if(st==='ok') label=(r.kap?'<b class="tk">💰</b>':'')+'<b class="t-ok">'+r.v+' ✔</b>';
+    else label=(r.kap?'<b class="tk">💰</b>':'')+'<span class="t-plain">'+r.v+'</span><span class="t-short"> 差'+(20-(r.v+mod))+'</span>';
+    r.tag.innerHTML=label;
+  });
+
+  var eff = succ + (cfg.kapDirect?kapSucc:0);
+  var need=cfg.need;
+  poolRes.style.display='';
+  $('#pBig').textContent=eff;
+  $('#pBonus').textContent = (!cfg.kapDirect&&kapSucc>0)?('＋'+kapSucc+' BONUS'):'';
+  $('#pMod').textContent = mod!==0
+    ? ('单骰门槛：≥ '+(20-mod)+'（能力+装备 = '+fmtMod(mod)+'），门槛 '+20+' − 修正 '+fmtMod(mod))
+    : '无修正：单骰 ≥ 20 即成功';
+
+  var vd=$('#pVerdict');
+  if(need>0){
+    if(eff>=need){ vd.className='verdict ok'; vd.textContent='✅ 检定达成：'+eff+' / '+need+' 个成功'; }
+    else{ vd.className='verdict fail'; vd.textContent='❌ 未达成：'+eff+' / '+need+' 个成功'; }
+  }else{
+    vd.className='verdict info'; vd.textContent='本池共 '+eff+' 个成功（未设门槛）';
+  }
+
+  var notes=[];
+  if(nat20>0) notes.push('⭐ Natural 20 ×'+nat20+'：无条件成功，无视能力要求，可充任任意检定（p.91）');
+  if(nat1>0) notes.push('☠ Natural 1 ×'+nat1+'：无条件失败，SC 抬骰 / 花 LABOUR 均不可转化（p.91）');
+  if(shorts.length) notes.push('💡 '+shorts.length+' 颗骰未过线（差 '+Math.min.apply(null,shorts)+'~'+Math.max.apply(null,shorts)+' 点）：可用 SC 能力抬骰，每个 SC 每轮限抬 1 颗（p.93）');
+  if(kapSucc>0 && !cfg.kapDirect) notes.push('💰 KAPITAL 成功 '+kapSucc+' 个 = BONUS，可叠加到同一个能力成功上（p.97）');
+  $('#pNotes').innerHTML=notes.length?notes.join('<br>'):'';
+
+  $('#pVals').textContent='骰值：'+vals.join(' / ');
+
+  addHist('pool', poolDesc(cfg), vals.join('·'),
+    need>0 ? (eff>=need?('✅ '+eff+'/'+need):( '❌ '+eff+'/'+need)) : (eff+' 成功'),
+    need>0 ? (eff>=need?'r-ok':'r-fail') : 'r-info');
+}
+function poolDesc(cfg){
+  var s=cfg.n+'d20';
+  var mod=cfg.ab+cfg.gear;
+  if(mod!==0) s+=fmtMod(mod);
+  if(cfg.k>0) s+=' + '+cfg.k+'d20💰';
+  return s;
+}
+
+/* 预设 */
+document.querySelectorAll('[data-preset]').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var p=btn.getAttribute('data-preset');
+    if(p==='default'){ stpPool.set(5);stpKap.set(0);stpAbility.set(0);stpGear.set(0);stpNeed.set(0);kapDirectEl.checked=false; }
+    if(p==='class'){ stpPool.set(1);stpKap.set(Math.max(stpKap.get(),1));stpNeed.set(1);kapDirectEl.checked=true; }
+    if(p==='scary'){ stpNeed.set(2); }
+    if(p==='shock'){ stpNeed.set(3); }
+    if(p==='horror'){ stpNeed.set(4); }
+    saveCfg(); updateRollLabel();
+  });
+});
+
+/* ================= 通用掷骰 ================= */
+function parseNotation(str){
+  if(!str) return null;
+  var s=String(str).replace(/\s+/g,'').replace(/＋/g,'+').replace(/－/g,'-').replace(/−/g,'-');
+  if(!/^[+-]?(\d+([dD]\d+)?)([+-]\d+([dD]\d+)?)*$/.test(s)) return null;
+  var re=/([+-]?)(\d+)(?:[dD](\d+))?/g, m, terms=[], flat=0, count=0;
+  while((m=re.exec(s))){
+    var sign=m[1]==='-'?-1:1;
+    var n=parseInt(m[2],10), d=m[3]?parseInt(m[3],10):0;
+    if(d){
+      if(n<1||n>50||d<2||d>1000) return null;
+      if(count+n>60) return null;
+      terms.push({n:n,d:d,sign:sign}); count+=n;
+    }else{
+      flat+=sign*n;
+    }
+  }
+  if(!count && !flat) return null;
+  return {terms:terms,flat:flat,count:count};
+}
+function notationDesc(p){
+  var parts=[];
+  p.terms.forEach(function(t){ parts.push((t.sign<0?'-':'+')+t.n+'d'+t.d); });
+  if(p.flat!==0||parts.length===0) parts.push((p.flat<0||parts.length===0?'':'+')+(p.flat<0?p.flat:Math.abs(p.flat)));
+  var s=parts.join('');
+  if(s.charAt(0)==='+') s=s.slice(1);
+  return s;
+}
+function rollGeneric(){
+  var errEl=$('#genErr'); if(errEl) errEl.style.display='none';
+  var parsed=parseNotation(notationEl.value);
+  if(!parsed){ showGenError('无法识别的表达式 —— 示例：2d6+1d4+3 / 1d20 / 5-1d6'); return; }
+  var vals=[];
+  parsed.terms.forEach(function(t){ for(var i=0;i<t.n;i++) vals.push({v:rnd(t.d),d:t.d,sign:t.sign}); });
+
+  var visual=vals.slice(0,16).map(function(x){ return {sides:x.d,klass:'gen',result:x.v}; });
+  var dice=renderTray($('#genTray'),visual);
+  if(vals.length>16){
+    var more=document.createElement('div'); more.className='morechip';
+    more.textContent='还有 '+(vals.length-16)+' 颗…';
+    $('#genTray').appendChild(more);
+  }
+
+  rolling=true; rollBtn.disabled=true;
+  var power=(lastPower!=null)?lastPower:(Math.random()<0.5?0:1); lastPower=null;
+  animateDice(dice,power,function(){
+    try{ showGenResult(parsed,vals); }
+    finally{
+      rolling=false; rollBtn.disabled=false;
+      updateRollLabel();
+    }
+  });
+}
+function showGenResult(p,vals){
+  var sum=p.flat;
+  vals.forEach(function(x){ sum+=x.sign*x.v; });
+  $('#genRes').style.display='';
+  $('#gBig').textContent=sum;
+  $('#gAvg').textContent=vals.length?('平均 '+(sum/vals.length).toFixed(1)):'';
+  $('#gVals').textContent=vals.length
+    ? ('明细：'+vals.map(function(x){return (x.sign<0?'−':'')+x.v+'(d'+x.d+')';}).join('  ')
+        +(p.flat?('  '+(p.flat>0?'+':'−')+Math.abs(p.flat)):''))
+    : '（纯常数）';
+  var op=optOpEl.value, tgtRaw=optValEl.value;
+  var vd=$('#gVerdict');
+  if(op && tgtRaw!=='' && !isNaN(parseFloat(tgtRaw))){
+    var t=parseFloat(tgtRaw);
+    var ok;
+    if(op==='>=') ok=sum>=t; else if(op==='>') ok=sum>t;
+    else if(op==='<=') ok=sum<=t; else if(op==='<') ok=sum<t; else ok=sum===t;
+    var OP={'≥':'>=','>':'>','≤':'<=','<':'<','=':'=='};
+    var sym={'>=':'≥','>':'>','<=':'≤','<':'<','==':'='}[op];
+    vd.style.display='';
+    vd.className='verdict '+(ok?'ok':'fail');
+    vd.textContent=(ok?'✅ 成功：':'❌ 失败：')+sum+' '+sym+' '+t;
+    addHist('gen',notationDesc(p),vals.map(function(x){return x.v;}).join('·'),
+      (ok?'✅ '+sum+'≥'+t:'❌ '+sum+sym+t), ok?'r-ok':'r-fail');
+  }else{
+    vd.style.display='none';
+    addHist('gen',notationDesc(p),vals.map(function(x){return x.v;}).join('·'),'= '+sum,'r-info');
+  }
+}
+function showGenError(msg){
+  var res=$('#genRes');
+  var el=$('#genErr');
+  if(!el){
+    el=document.createElement('div'); el.id='genErr'; el.className='gerr';
+    res.parentNode.insertBefore(el,res);
+  }
+  el.style.display='block'; el.textContent=msg;
+}
+document.querySelectorAll('.qdie').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var a=btn.getAttribute('data-add');
+    if(a==='clr'){ notationEl.value=''; }
+    else{
+      var cur=notationEl.value.replace(/\s+/g,'');
+      notationEl.value = cur ? (cur+'+1'+a) : ('1'+a);
+    }
+    saveCfg(); updateRollLabel();
+  });
+});
+
+/* ================= 结论：操作符符号显示 ================= */
+
+/* ================= 历史 ================= */
+var HKEY='mvk_dice_hist_v1';
+function loadHist(){ try{ return JSON.parse(localStorage.getItem(HKEY)||'[]'); }catch(e){ return []; } }
+function addHist(mode,desc,vals,res,cls){
+  var arr=loadHist();
+  arr.unshift({t:Date.now(),m:mode,d:desc,v:vals,r:res,c:cls});
+  arr=arr.slice(0,30);
+  try{ localStorage.setItem(HKEY,JSON.stringify(arr)); }catch(e){}
+  renderHist();
+}
+function renderHist(){
+  var arr=loadHist(), ul=$('#histList');
+  ul.innerHTML='';
+  if(!arr.length){ ul.innerHTML='<li style="border-style:dashed;color:#6b5c55">暂无记录</li>'; return; }
+  arr.forEach(function(h){
+    var li=document.createElement('li');
+    var d=new Date(h.t);
+    var hh=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    li.innerHTML='<span class="ht">'+hh+'</span><b>'+(h.m==='pool'?'骰池':'通用')+' '+h.d+'</b>'
+      +'<span class="hv">'+h.v+'</span><span class="'+h.c+'">'+h.r+'</span>';
+    ul.appendChild(li);
+  });
+}
+$('#histClear').addEventListener('click',function(){
+  try{ localStorage.removeItem(HKEY); }catch(e){}
+  renderHist();
+});
+
+/* ================= 摇一摇（DeviceMotion / 陀螺仪加速度计） ================= */
+var shakeOn=false, lastTrig=0, lastAcc=null, meterPend=0, meterRaf=0;
+var btnShake=$('#btnShake'), shakebar=$('#shakebar'), shakeStatusEl=$('#shakeStatus'), meterFill=$('#meterFill');
+
+function shakeStatus(msg,warn){
+  shakeStatusEl.textContent=msg;
+  shakeStatusEl.className=warn?'warn':'';
+}
+function onMotion(e){
+  var a=e.accelerationIncludingGravity||e.acceleration;
+  if(!a||a.x==null) return;
+  var now=Date.now();
+  if(lastAcc){
+    var delta=Math.abs(a.x-lastAcc.x)+Math.abs(a.y-lastAcc.y)+Math.abs(a.z-lastAcc.z);
+    meterPend=delta;
+    if(!meterRaf) meterRaf=requestAnimationFrame(function(){
+      meterRaf=0;
+      meterFill.style.width=clamp(meterPend/40*100,0,100)+'%';
+    });
+    var sens=parseInt(sensEl.value,10)||16;
+    if(delta>=sens && now-lastTrig>1200 && !rolling && document.visibilityState==='visible'){
+      lastTrig=now;
+      lastPower=clamp(Math.round((delta-sens)/14),0,3); // 甩得越狠翻滚越久
+      if(navigator.vibrate) navigator.vibrate(35);
+      triggerRoll();
+    }
+  }
+  lastAcc={x:a.x,y:a.y,z:a.z};
+}
+btnShake.addEventListener('click',function(){
+  ensureAC();
+  if(shakeOn){ // 关闭
+    window.removeEventListener('devicemotion',onMotion);
+    shakeOn=false; btnShake.classList.remove('on'); btnShake.textContent='📳 摇一摇';
+    shakebar.classList.remove('on'); meterFill.style.width='0%';
+    return;
+  }
+  if(typeof DeviceMotionEvent==='undefined'){
+    shakeStatus('此设备/浏览器不支持运动传感器（桌面端请用按钮或空格键）',true);
+    return;
+  }
+  var go=function(){
+    window.addEventListener('devicemotion',onMotion);
+    shakeOn=true; btnShake.classList.add('on'); btnShake.textContent='📳 摇一摇：开';
+    shakebar.classList.add('on');
+    shakeStatus('已启用 —— 甩动手机即可掷骰；甩得越狠，骰子翻滚越久');
+  };
+  try{
+    if(typeof DeviceMotionEvent.requestPermission==='function'){ // iOS 13+ Safari
+      DeviceMotionEvent.requestPermission().then(function(state){
+        if(state==='granted'){ go(); }
+        else{ shakeStatus('权限被拒绝：需在「设置 → Safari → 动作」允许访问后重试',true); }
+      }).catch(function(err){ shakeStatus('请求权限失败：'+(err&&err.message||err),true); });
+    }else{
+      go(); // Android Chrome 等：HTTPS 下直接监听
+    }
+  }catch(err){ shakeStatus('启用失败：'+(err&&err.message||err),true); }
+});
+sensEl.addEventListener('input',function(){ sensValEl.textContent=sensEl.value; saveCfg(); });
+if(!window.isSecureContext){
+  shakeStatus('⚠ 当前不是安全上下文（HTTPS / localhost），运动传感器将不可用',true);
+}
+
+/* ================= 标签页 / 掷骰入口 ================= */
+var tabPool=$('#tabPool'), tabGen=$('#tabGen');
+var panelPool=$('#panelPool'), panelGen=$('#panelGen');
+var activeTab='pool';
+function setTab(name){
+  activeTab=name;
+  tabPool.classList.toggle('on',name==='pool');
+  tabGen.classList.toggle('on',name==='gen');
+  panelPool.style.display=name==='pool'?'':'none';
+  panelGen.style.display=name==='gen'?'':'none';
+  updateRollLabel();
+}
+tabPool.addEventListener('click',function(){ setTab('pool'); });
+tabGen.addEventListener('click',function(){ setTab('gen'); });
+
+function updateRollLabel(){
+  if(activeTab==='pool'){
+    var cfg=readPoolCfg();
+    rollBtn.textContent='掷 '+cfg.n+'+'+cfg.k+' 颗 d20';
+  }else{
+    var p=parseNotation(notationEl.value);
+    rollBtn.textContent=p?('掷 '+notationDesc(p)):'掷骰（输入表达式）';
+  }
+}
+function triggerRoll(){
+  if(rolling) return;
+  if(activeTab==='pool') rollPool(); else rollGeneric();
+}
+rollBtn.addEventListener('click',triggerRoll);
+document.addEventListener('keydown',function(e){
+  if(e.code==='Space' && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(document.activeElement.tagName)){
+    e.preventDefault(); triggerRoll();
+  }
+});
+notationEl.addEventListener('input',function(){ saveCfg(); updateRollLabel(); });
+optOpEl.addEventListener('change',saveCfg);
+optValEl.addEventListener('input',saveCfg);
+
+/* ================= 初始化 ================= */
+var noop=function(){};
+stpPool =stepper('stpPool',1,16,updateRollLabel);
+stpKap  =stepper('stpKap',0,6,updateRollLabel);
+stpAbility=stepper('stpAbility',-10,20,noop);
+stpGear =stepper('stpGear',-10,20,noop);
+stpNeed =stepper('stpNeed',0,10,noop);
+loadCfg();
+renderHist();
+updateRollLabel();
+})();
+</script>
+</body>
+</html>
