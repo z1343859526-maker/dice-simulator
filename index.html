@@ -83,10 +83,14 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
 /* ---------- dice tray ---------- */
 .tray{
-  min-height:170px;display:flex;flex-wrap:wrap;gap:16px 14px;align-items:center;justify-content:center;
+  position:relative;min-height:260px;display:flex;flex-wrap:wrap;gap:16px 14px;align-items:center;justify-content:center;
   padding:20px 10px;margin-top:12px;border-radius:14px;border:1px dashed var(--line);
   background:radial-gradient(ellipse at 50% 28%,#261a19 0%,#171211 72%);
 }
+@media (max-width:480px){.tray{min-height:215px}}
+.physCanvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.tagsRow{position:absolute;left:0;right:0;bottom:8px;display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;pointer-events:none}
+.physStat{position:absolute;top:6px;right:10px;font-size:10px;color:#6b5c55;pointer-events:none;line-height:1.4;text-align:right}
 .tray .empty{color:#6b5c55;font-size:12.5px}
 .diecell{display:flex;flex-direction:column;align-items:center;gap:7px}
 .die{--s:70px;width:var(--s);height:var(--s);position:relative;perspective:540px}
@@ -292,7 +296,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
 <div class="bar">
   <button class="rollbtn" id="rollBtn" type="button">掷　骰</button>
-  <div class="barhint">桌面端：点击按钮或按 空格键 掷骰 · 手机端：点右上角「摇一摇」授权后，甩动手机即可掷骰<br>⚠ 运动传感器需要 HTTPS（或 localhost）环境，本地双击打开文件无法使用摇一摇</div>
+  <div class="barhint">桌面端：点击按钮或按 空格键 掷骰 · 手机端：点右上角「摇一摇」授权后甩动手机掷骰 —— 甩得越猛，骰子掷得越猛（真实物理投掷）<br>⚠ 运动传感器需要 HTTPS（或 localhost）环境 · 物理引擎（three.js/cannon-es）首次掷骰需联网加载，失败时自动退回简化动画</div>
 </div>
 
 <script>
@@ -439,6 +443,397 @@ function renderTray(trayEl,items){
   return dice;
 }
 
+/* ================= 物理骰子引擎（three.js 渲染 + cannon-es 物理，CDN 动态加载，失败自动回退 CSS 动画） ================= */
+var PHYS_CDNS=[
+  ['https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js','https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js'],
+  ['https://unpkg.com/three@0.160.0/build/three.module.js','https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js'],
+  ['https://registry.npmmirror.com/three/0.160.0/files/build/three.module.js','https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js']
+];
+var PHYS_STATE; // undefined=未尝试, false=加载失败, 引擎对象
+function _dynImport(u){ try{ return new Function('u','return import(u);')(u); }catch(e){ return Promise.reject(e); } }
+function loadPhys(){
+  if(PHYS_STATE!==undefined) return Promise.resolve(PHYS_STATE);
+  window._physErr=window._physErr||[];
+  window._loadPhys=loadPhys;
+  function tryNext(i){
+    if(i>=PHYS_CDNS.length){ PHYS_STATE=false; return Promise.resolve(false); }
+    var p=PHYS_CDNS[i];
+    var to=function(){ return new Promise(function(res){ setTimeout(function(){res(null);},9000); }); };
+    return Promise.all([
+      Promise.race([_dynImport(p[0]).catch(function(e){window._physErr.push('THREE@'+p[0].split('/')[2]+': '+String(e&&e.message||e)); return null;}),to()]),
+      Promise.race([_dynImport(p[1]).catch(function(e){window._physErr.push('CANNON@'+p[1].split('/')[2]+': '+String(e&&e.message||e)); return null;}),to()])
+    ]).then(function(rs){
+      if(rs[0]&&rs[1]){
+        try{ PHYS_STATE=createPhysEngine(rs[0],rs[1]); return PHYS_STATE; }
+        catch(e){ window._physErr.push('ENGINE: '+String(e&&e.stack||e)); PHYS_STATE=false; return false; }
+      }
+      return tryNext(i+1);
+    });
+  }
+  return tryNext(0);
+}
+function poolTagHTML(v,mod,kap){
+  var kapPre=kap?'<b class="tk">💰</b>':'';
+  if(v===20) return kapPre+'<b class="t-s20">'+v+' ⭐</b>';
+  if(v===1)  return kapPre+'<b class="t-f1">'+v+' ☠</b>';
+  if(v+mod>=20) return kapPre+'<b class="t-ok">'+v+' ✔</b>';
+  return kapPre+'<span class="t-plain">'+v+'</span><span class="t-short"> 差'+(20-(v+mod))+'</span>';
+}
+function setPhysStat(trayEl,msg){
+  var el=trayEl.querySelector('.physStat');
+  if(!el){ el=document.createElement('div'); el.className='physStat'; trayEl.appendChild(el); }
+  el.textContent=msg;
+}
+function physicalRoll(engine,trayEl,specs,power,results,onDone){
+  engine.attach(trayEl);
+  trayEl.innerHTML='';
+  trayEl.appendChild(engine.dom());
+  var tagsRow=document.createElement('div'); tagsRow.className='tagsRow'; trayEl.appendChild(tagsRow);
+  var tags=specs.map(function(){
+    var t=document.createElement('div'); t.className='tag';
+    t.innerHTML='<span class="t-plain">…</span>'; tagsRow.appendChild(t); return t;
+  });
+  results.forEach(function(r,i){ r.tag=tags[i]; });
+  if(power>0) setPhysStat(trayEl,'物理模拟 · 投掷力度 '+(1+power)+' 档');
+  engine.throwDice(specs,power,{
+    onDie:function(i,v){
+      results[i].v=v;
+      tags[i].innerHTML = results[i]._pool ? poolTagHTML(v,results[i]._mod,results[i].kap)
+                                           : '<b class="t-ok">'+v+'</b>';
+      clack(0.55+power*0.12);
+    },
+    onDone:onDone
+  });
+}
+function cssRoll(trayEl,specs,power,results,onDone,klass){
+  var items=specs.map(function(s){ return {sides:s.sides,klass:s.kap?'kap':klass,result:rnd(s.sides)}; });
+  var dice=renderTray(trayEl,items);
+  results.forEach(function(r,i){ r.v=items[i].result; r.tag=dice[i].tag; });
+  animateDice(dice,power,onDone);
+}
+function launchDice(trayEl,specs,power,results,onDone,klass){
+  loadPhys().then(function(engine){
+    if(engine){
+      setPhysStat(trayEl,'物理模拟 · three.js + cannon-es');
+      physicalRoll(engine,trayEl,specs,power,results,onDone);
+    }else{
+      cssRoll(trayEl,specs,power,results,onDone,klass||'gen');
+      setPhysStat(trayEl,'简化动画 · 物理引擎加载失败（需联网）');
+    }
+  });
+}
+function createPhysEngine(THREE,CANNON){
+  var W=12.5,H=7.4,DIE=1.02;
+  var renderer=null,scene=null,camera=null,world=null;
+  var container=null,observer=null,raf=0;
+  var active=[],ASSETS={};
+  function norm3(a){var l=Math.hypot(a[0],a[1],a[2])||1;return [a[0]/l,a[1]/l,a[2]/l];}
+  function cross3(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+  function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+
+  /* ---- 多面体数据：顶点 + 面（d10/d12 通过反棱柱/二十面体的对偶构造，保证是真几何） ---- */
+  function polyData(type){
+    var phi=(1+Math.sqrt(5))/2;
+    function ico(){
+      var v=[[-1,phi,0],[1,phi,0],[-1,-phi,0],[1,-phi,0],[0,-1,phi],[0,1,phi],[0,-1,-phi],[0,1,-phi],[phi,0,-1],[phi,0,1],[-phi,0,-1],[-phi,0,1]].map(norm3);
+      var f=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]];
+      return {v:v,f:f};
+    }
+    function dual(base){ // 对偶多面体：面心→顶点，顶点周围面心按角序连成面
+      var dv=base.f.map(function(fc){
+        var c=[0,0,0];fc.forEach(function(i){c[0]+=base.v[i][0];c[1]+=base.v[i][1];c[2]+=base.v[i][2];});
+        return norm3(c);
+      });
+      var df=[];
+      for(var vi=0;vi<base.v.length;vi++){
+        var inc=[];
+        base.f.forEach(function(fc,fi){ if(fc.indexOf(vi)>=0)inc.push(fi); });
+        var axis=base.v[vi];
+        var ref=Math.abs(axis[1])>0.9?[1,0,0]:[0,1,0];
+        var t1=norm3(cross3(axis,ref)),t2=cross3(axis,t1);
+        inc.sort(function(x,y){
+          return Math.atan2(dot3(dv[y],t2),dot3(dv[y],t1))-Math.atan2(dot3(dv[x],t2),dot3(dv[x],t1));
+        });
+        df.push(inc);
+      }
+      return {v:dv,f:df};
+    }
+    var out;
+    if(type===4){
+      out={v:[[1,1,1],[-1,-1,1],[-1,1,-1],[1,-1,-1]].map(norm3),f:[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]};
+    }else if(type===6){
+      var s=1/Math.sqrt(3);
+      out={v:[[-s,-s,-s],[s,-s,-s],[s,s,-s],[-s,s,-s],[-s,-s,s],[s,-s,s],[s,s,s],[-s,s,s]],
+           f:[[0,3,2,1],[4,5,6,7],[0,1,5,4],[2,3,7,6],[1,2,6,5],[0,4,7,3]]};
+    }else if(type===8){
+      out={v:[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]],
+           f:[[0,2,4],[0,4,3],[0,3,5],[0,5,2],[1,4,2],[1,3,4],[1,5,3],[1,2,5]]};
+    }else if(type===10){ // 五角梯面体：五边形反棱柱的对偶
+      var av=[],af=[],k;
+      for(k=0;k<5;k++){
+        var a1=2*Math.PI*k/5;
+        av.push([Math.cos(a1),0.62,Math.sin(a1)]);
+        av.push([Math.cos(a1+Math.PI/5),-0.62,Math.sin(a1+Math.PI/5)]);
+      }
+      for(k=0;k<5;k++){
+        var r1=2*k,s1=2*k+1,r2=2*((k+1)%5),s2=2*((k+1)%5)+1;
+        af.push([r1,s1,r2]); af.push([s1,s2,r2]);
+      }
+      out=dual({v:av,f:af});
+    }else if(type===12){
+      out=dual(ico());
+    }else{
+      out=ico();
+    }
+    return {verts:out.v,faces:out.f};
+  }
+
+  /* ---- 骰子资产：几何(带槽位UV贴图) + cannon 凸多面体 + 面法线/点数 ---- */
+  function buildAssets(type,klass){
+    var key=type+'|'+klass;
+    if(ASSETS[key]) return ASSETS[key];
+    var pd=polyData(type);
+    var rmax=0;
+    pd.verts.forEach(function(v){ rmax=Math.max(rmax,Math.hypot(v[0],v[1],v[2])); });
+    var sc=DIE/rmax;
+    var verts=pd.verts.map(function(v){ return [v[0]*sc,v[1]*sc,v[2]*sc]; });
+    var faces=pd.faces,n=faces.length,i;
+    var normals=[],cents=[];
+    faces.forEach(function(f){
+      var a=verts[f[0]],b=verts[f[1]],c=verts[f[2]];
+      normals.push(norm3(cross3([b[0]-a[0],b[1]-a[1],b[2]-a[2]],[c[0]-a[0],c[1]-a[1],c[2]-a[2]])));
+      var cx=0,cy=0,cz=0;f.forEach(function(vi){cx+=verts[vi][0];cy+=verts[vi][1];cz+=verts[vi][2];});
+      cents.push([cx/f.length,cy/f.length,cz/f.length]);
+    });
+    faces=faces.map(function(f,fi){ // 统一修正为外向面（cannon 需要从外看逆时针）
+      if(dot3(normals[fi],cents[fi])<0){
+        normals[fi]=[-normals[fi][0],-normals[fi][1],-normals[fi][2]];
+        return f.slice().reverse();
+      }
+      return f.slice();
+    });
+    // 点数分配：中心对称面配对，对面和 = n+1（d4 直接顺序）
+    var values=new Array(n);
+    if(type===4){ for(i=0;i<n;i++)values[i]=i+1; }
+    else{
+      var order=normals.map(function(_,k){return k;}).sort(function(a,b){return normals[b][1]-normals[a][1];});
+      for(i=0;i<n/2;i++){ values[order[i]]=n-i; values[order[n-1-i]]=i+1; }
+    }
+    // three.js 几何：每面扇形三角化 + 面内切向基投影出 UV（圆形槽位互不重叠）
+    var cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols);
+    var posArr=[],nrmArr=[],uvArr=[];
+    var ru=(0.5/cols)*0.8,rv=(0.5/rows)*0.8;
+    faces.forEach(function(f,fi){
+      var cu=((fi%cols)+0.5)/cols, cvv=1-((Math.floor(fi/cols)+0.5)/rows);
+      var nrm=normals[fi],cen=cents[fi];
+      var up=Math.abs(nrm[1])>0.9?[1,0,0]:[0,1,0];
+      var t1=norm3(cross3(nrm,up)),t2=cross3(nrm,t1);
+      var maxr=0;
+      f.forEach(function(vi){
+        var d=[verts[vi][0]-cen[0],verts[vi][1]-cen[1],verts[vi][2]-cen[2]];
+        maxr=Math.max(maxr,Math.hypot(d[0],d[1],d[2]));
+      });
+      var uvs={};
+      f.forEach(function(vi){
+        var d=[verts[vi][0]-cen[0],verts[vi][1]-cen[1],verts[vi][2]-cen[2]];
+        uvs[vi]=[cu+(dot3(d,t1)/maxr)*ru, cvv+(dot3(d,t2)/maxr)*rv];
+      });
+      for(var k=1;k<f.length-1;k++){
+        [f[0],f[k],f[k+1]].forEach(function(vi){
+          var v=verts[vi];
+          posArr.push(v[0],v[1],v[2]);
+          nrmArr.push(nrm[0],nrm[1],nrm[2]);
+          uvArr.push(uvs[vi][0],uvs[vi][1]);
+        });
+      }
+    });
+    var geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.Float32BufferAttribute(posArr,3));
+    geo.setAttribute('normal',new THREE.Float32BufferAttribute(nrmArr,3));
+    geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvArr,2));
+    // 贴图：网格槽位上画数字（d6 画点数）
+    var cvs=document.createElement('canvas'); cvs.width=1024; cvs.height=1024;
+    var ctx=cvs.getContext('2d');
+    var d6=(type===6);
+    var th=d6?{bg:'#f2ede2',fg:'#26201d'}
+            :klass==='kap'?{bg:'#3a2d17',fg:'#e8b34b'}
+            :klass==='gen'?{bg:'#2e231c',fg:'#ff9d7a'}
+            :{bg:'#2e2423',fg:'#ff6f72'};
+    ctx.fillStyle=th.bg; ctx.fillRect(0,0,1024,1024);
+    var cell=Math.min(1024/cols,1024/rows);
+    faces.forEach(function(f,fi){
+      var cx=((fi%cols)+0.5)*1024/cols, cy=(Math.floor(fi/cols)+0.5)*1024/rows;
+      if(d6){
+        var PIPS={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
+        ctx.fillStyle=th.fg;
+        PIPS[values[fi]].forEach(function(p){
+          var px=cx+((p%3)-1)*cell*0.26, py=cy+(Math.floor(p/3)-1)*cell*0.26;
+          ctx.beginPath(); ctx.arc(px,py,cell*0.085,0,7); ctx.fill();
+        });
+      }else{
+        ctx.strokeStyle='rgba(255,255,255,0.09)'; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(cx,cy,cell*0.42,0,7); ctx.stroke();
+        ctx.fillStyle=th.fg;
+        ctx.font='700 '+Math.floor(cell*0.5)+'px "Segoe UI",Arial,sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(String(values[fi]),cx,cy+cell*0.02);
+      }
+    });
+    var tex=new THREE.CanvasTexture(cvs);
+    if(THREE.SRGBColorSpace) tex.colorSpace=THREE.SRGBColorSpace;
+    tex.anisotropy=4;
+    var material=new THREE.MeshStandardMaterial({map:tex,roughness:0.5,metalness:0.04});
+    var shape=new CANNON.ConvexPolyhedron({
+      vertices:verts.map(function(v){ return new CANNON.Vec3(v[0],v[1],v[2]); }),
+      faces:faces
+    });
+    var cnormals=normals.map(function(nn){ return new CANNON.Vec3(nn[0],nn[1],nn[2]); });
+    ASSETS[key]={geometry:geo,material:material,shape:shape,values:values,cnormals:cnormals};
+    return ASSETS[key];
+  }
+
+  /* ---- 场景 / 物理世界 ---- */
+  function ensure(){
+    if(renderer) return;
+    renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+    renderer.domElement.className='physCanvas';
+    scene=new THREE.Scene();
+    camera=new THREE.PerspectiveCamera(42,2,0.1,150);
+    camera.position.set(0,9.8,8.8); camera.lookAt(0,0,-0.4);
+    scene.add(new THREE.AmbientLight(0xffffff,1.6));
+    var dl=new THREE.DirectionalLight(0xffffff,2.2);
+    dl.position.set(4.5,12,5); dl.castShadow=true;
+    dl.shadow.mapSize.set(1024,1024);
+    dl.shadow.camera.left=-9; dl.shadow.camera.right=9;
+    dl.shadow.camera.top=9; dl.shadow.camera.bottom=-9;
+    scene.add(dl);
+    var ground=new THREE.Mesh(new THREE.PlaneGeometry(W*1.5,H*1.5),new THREE.ShadowMaterial({opacity:0.36}));
+    ground.rotation.x=-Math.PI/2; ground.position.y=0.001; ground.receiveShadow=true; scene.add(ground);
+    world=new CANNON.World({gravity:new CANNON.Vec3(0,-55,0),allowSleep:true});
+    world.defaultContactMaterial.friction=0.35;
+    world.defaultContactMaterial.restitution=0.35;
+    var gb=new CANNON.Body({mass:0,shape:new CANNON.Plane()});
+    gb.quaternion.setFromEuler(-Math.PI/2,0,0);
+    world.addBody(gb);
+    function wall(x,z,ry){
+      var b=new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(W/2+2,6,0.5))});
+      b.position.set(x,6,z);
+      if(ry)b.quaternion.setFromEuler(0,ry,0);
+      world.addBody(b);
+    }
+    wall(0,-H/2-0.5,0); wall(0,H/2+0.5,0);
+    wall(-W/2-0.5,0,Math.PI/2); wall(W/2+0.5,0,Math.PI/2);
+  }
+  function attach(c){
+    ensure();
+    if(container&&observer)observer.unobserve(container);
+    container=c;
+    observer=new ResizeObserver(function(){resize();});
+    observer.observe(c);
+    resize();
+  }
+  function resize(){
+    if(!renderer||!container)return;
+    var w=container.clientWidth||640,h=container.clientHeight||300;
+    renderer.setSize(w,h,false);
+    camera.aspect=w/h; camera.updateProjectionMatrix();
+  }
+  function sync(d){
+    d.mesh.position.copy(d.body.position);
+    d.mesh.quaternion.copy(d.body.quaternion);
+  }
+  function readResult(d){
+    var best=d.sides===4?2:-2,val=1;
+    for(var i=0;i<d.normals.length;i++){
+      var wn=d.body.quaternion.vmult(d.normals[i]);
+      if(d.sides===4){ if(wn.y<best){best=wn.y;val=d.values[i];} }
+      else if(wn.y>best){best=wn.y;val=d.values[i];}
+    }
+    return val;
+  }
+  function clearDice(){
+    active.forEach(function(d){ world.removeBody(d.body); scene.remove(d.mesh); });
+    active=[];
+  }
+  function throwDice(specs,power,cbs){
+    clearDice();
+    var finished=false,landed=0,lastLoop=performance.now();
+    function finish(){
+      if(finished)return; finished=true;
+      if(raf){ cancelAnimationFrame(raf); raf=0; }
+      renderer.render(scene,camera);
+      if(cbs.onDone)cbs.onDone();
+    }
+    function readResultLocal(d){ return readResult(d); }
+    function forceFinish(){ // 兜底：唤醒未结算的骰子并按当前姿态读数
+      active.forEach(function(rec,i){
+        if(!rec.result)rec.result=readResultLocal(rec);
+        if(!rec.notified){ rec.notified=true; if(cbs.onDie)cbs.onDie(i,rec.result); }
+      });
+      finish();
+    }
+    var n=specs.length,perRow=Math.min(n,5);
+    specs.forEach(function(sp,i){
+      var a=buildAssets(sp.sides,sp.kap?'kap':'gen');
+      var mesh=new THREE.Mesh(a.geometry,a.material);
+      mesh.castShadow=true; scene.add(mesh);
+      var body=new CANNON.Body({
+        mass:1,shape:a.shape,
+        // 网格出生（间距>骰子直径，杜绝出生互嵌）；行数与高度错开大骰池
+        position:new CANNON.Vec3(
+          ((i%perRow)-(perRow-1)/2)*2.5+(Math.random()*0.6-0.3),
+          3.2+Math.floor(i/perRow)*2.6+(i%3)*0.5,
+          H/2-1.0-(i%3)*0.8-Math.random()*0.3),
+        linearDamping:0.06,angularDamping:0.08,
+        allowSleep:true,sleepSpeedLimit:0.25,sleepTimeLimit:1.0
+      });
+      body.quaternion.setFromEuler(Math.random()*6.283,Math.random()*6.283,Math.random()*6.283);
+      var pw=1+(power||0);
+      body.velocity.set(
+        (Math.random()*2-1)*(1.2+pw*0.8),
+        1.5+Math.random()*1.5,
+        -(9+pw*3.5+Math.random()*3));
+      var s=10+pw*10;
+      body.angularVelocity.set((Math.random()*2-1)*s,(Math.random()*2-1)*s,(Math.random()*2-1)*s);
+      var rec={mesh:mesh,body:body,normals:a.cnormals,values:a.values,sides:sp.sides,result:0,notified:false};
+      body.addEventListener('sleep',function(){
+        if(rec.notified)return;
+        rec.notified=true; rec.result=readResultLocal(rec); landed++;
+        if(cbs.onDie)cbs.onDie(i,rec.result);
+        if(landed>=specs.length)finish();
+      });
+      active.push(rec);
+      sync(rec);
+    });
+    (function scheduleForce(){ // 8 秒未自然落定则强制结算；标签退后台(rAF 暂停)时顺延，避免读到冻结姿态
+      setTimeout(function(){
+        if(finished)return;
+        if(performance.now()-lastLoop>1500){ scheduleForce(); return; }
+        forceFinish();
+      },8000);
+    })();
+    function loop(){
+      if(finished)return;
+      raf=requestAnimationFrame(loop);
+      lastLoop=performance.now();
+      try{ world.step(1/60); }
+      catch(e){
+        (window._physErr=window._physErr||[]).push('STEP: '+String(e&&e.message||e));
+        finish(); return;
+      }
+      active.forEach(sync);
+      renderer.render(scene,camera);
+    }
+    loop();
+  }
+  return {
+    attach:attach, resize:resize, throwDice:throwDice,
+    dom:function(){ return renderer.domElement; }
+  };
+}
+
 /* ================= 配置持久化 ================= */
 var stpPool,stpKap,stpAbility,stpGear,stpNeed;
 var notationEl=$('#notation'), optOpEl=$('#optOp'), optValEl=$('#optVal');
@@ -475,25 +870,21 @@ function readPoolCfg(){
 }
 function rollPool(){
   var cfg=readPoolCfg();
-  var results=[];
-  var i;
-  for(i=0;i<cfg.n;i++) results.push({v:rnd(20),kap:false});
-  for(i=0;i<cfg.k;i++) results.push({v:rnd(20),kap:true});
-  if(!results.length){ poolTray.innerHTML='<span class="empty">骰池为空</span>'; return; }
-
-  var items=results.map(function(r){ return {sides:20,klass:r.kap?'kap':'pool',result:r.v}; });
-  var dice=renderTray(poolTray,items);
-  results.forEach(function(r,i){ r.tag=dice[i].tag; }); // 把骰子下的标签关联回结果对象
+  var specs=[],i;
+  for(i=0;i<cfg.n;i++) specs.push({sides:20,kap:false});
+  for(i=0;i<cfg.k;i++) specs.push({sides:20,kap:true});
+  if(!specs.length){ poolTray.innerHTML='<span class="empty">骰池为空</span>'; return; }
+  var results=specs.map(function(s){ return {v:0,kap:s.kap,_pool:true,_mod:cfg.ab+cfg.gear}; });
 
   rolling=true; rollBtn.disabled=true;
-  var power = (lastPower!=null)?lastPower:(Math.random()<0.5?0:1); lastPower=null;
-  animateDice(dice,power,function(){
-    try{ evaluatePool(results,cfg); }
+  var power=(lastPower!=null)?lastPower:(Math.random()<0.5?0:1); lastPower=null;
+  launchDice(poolTray,specs,power,results,function(){
+    try{ if(results.every(function(r){return r.v>0;})) evaluatePool(results,cfg); }
     finally{ // 即使结论渲染出错也必须解除掷骰锁
       rolling=false; rollBtn.disabled=false;
       updateRollLabel();
     }
-  });
+  },'pool');
 }
 function evaluatePool(results,cfg){
   var mod=cfg.ab+cfg.gear, succ=0, kapSucc=0, nat20=0, nat1=0, shorts=[], vals=[];
@@ -506,12 +897,7 @@ function evaluatePool(results,cfg){
     if(ok){ if(r.kap && !cfg.kapDirect) kapSucc++; else succ++; }
     vals.push((r.kap?'💰':'')+r.v+(st==='s20'?'⭐':st==='f1'?'☠':''));
     var cls = st==='s20'?'t-s20':st==='f1'?'t-f1':st==='ok'?'t-ok':'t-short';
-    var label;
-    if(st==='s20') label='<b class="tk">💰</b><b class="t-s20">'+r.v+' ⭐</b>';
-    else if(st==='f1') label=(r.kap?'<b class="tk">💰</b>':'')+'<b class="t-f1">'+r.v+' ☠</b>';
-    else if(st==='ok') label=(r.kap?'<b class="tk">💰</b>':'')+'<b class="t-ok">'+r.v+' ✔</b>';
-    else label=(r.kap?'<b class="tk">💰</b>':'')+'<span class="t-plain">'+r.v+'</span><span class="t-short"> 差'+(20-(r.v+mod))+'</span>';
-    r.tag.innerHTML=label;
+    r.tag.innerHTML=poolTagHTML(r.v,mod,r.kap);
   });
 
   var eff = succ + (cfg.kapDirect?kapSucc:0);
@@ -597,26 +983,38 @@ function rollGeneric(){
   var errEl=$('#genErr'); if(errEl) errEl.style.display='none';
   var parsed=parseNotation(notationEl.value);
   if(!parsed){ showGenError('无法识别的表达式 —— 示例：2d6+1d4+3 / 1d20 / 5-1d6'); return; }
-  var vals=[];
-  parsed.terms.forEach(function(t){ for(var i=0;i<t.n;i++) vals.push({v:rnd(t.d),d:t.d,sign:t.sign}); });
-
-  var visual=vals.slice(0,16).map(function(x){ return {sides:x.d,klass:'gen',result:x.v}; });
-  var dice=renderTray($('#genTray'),visual);
-  if(vals.length>16){
-    var more=document.createElement('div'); more.className='morechip';
-    more.textContent='还有 '+(vals.length-16)+' 颗…';
-    $('#genTray').appendChild(more);
-  }
+  // d4~d20 走物理骰（最多 16 颗），d100 等其余面数用随机数直接计算
+  var specs=[],tmpl=[];
+  parsed.terms.forEach(function(t){
+    for(var i=0;i<t.n;i++){
+      if(t.d>=4&&t.d<=20&&specs.length<16){ tmpl.push({die:specs.length}); specs.push({sides:t.d,kap:false}); }
+      else tmpl.push({v:rnd(t.d),d:t.d,sign:t.sign});
+    }
+  });
 
   rolling=true; rollBtn.disabled=true;
   var power=(lastPower!=null)?lastPower:(Math.random()<0.5?0:1); lastPower=null;
-  animateDice(dice,power,function(){
-    try{ showGenResult(parsed,vals); }
+  var finishGen=function(){
+    try{
+      var vals=tmpl.map(function(e){
+        return e.die!=null ? {v:results[e.die].v,d:specs[e.die].sides,sign:specs[e.die].sign}
+                           : {v:e.v,d:e.d,sign:e.sign};
+      });
+      showGenResult(parsed,vals);
+    }
     finally{
       rolling=false; rollBtn.disabled=false;
       updateRollLabel();
     }
-  });
+  };
+  if(!specs.length){ // 纯常数/特殊面数：无需动画
+    var vals0=tmpl.map(function(e){ return {v:e.v,d:e.d,sign:e.sign}; });
+    showGenResult(parsed,vals0);
+    rolling=false; rollBtn.disabled=false; updateRollLabel();
+    return;
+  }
+  var results=specs.map(function(s){ return {v:0,kap:false,_pool:false,sides:s.sides,sign:s.sign}; });
+  launchDice($('#genTray'),specs,power,results,finishGen,'gen');
 }
 function showGenResult(p,vals){
   var sum=p.flat;
