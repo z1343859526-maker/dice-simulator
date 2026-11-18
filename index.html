@@ -196,13 +196,14 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
   <h1>骰子模拟器<small>MVK 骰池 · 通用掷骰 · 摇一摇</small></h1>
   <span class="hspace"></span>
   <button class="hbtn" id="btnSound" type="button">🔊 音效</button>
+  <button class="hbtn" id="btnReset" type="button">↺ 重置</button>
   <button class="hbtn" id="btnShake" type="button">📳 摇一摇</button>
 </header>
 
 <div class="shakebar" id="shakebar">
   <span>灵敏度</span>
   <div class="senswrap">
-    <input type="range" id="sens" min="8" max="40" step="1" value="16">
+    <input type="range" id="sens" min="6" max="40" step="1" value="10">
     <span id="sensVal">16</span>
   </div>
   <div class="meter"><i id="meterFill"></i></div>
@@ -66528,7 +66529,7 @@ function renderTray(trayEl,items){
 }
 
 /* ================= 物理骰子引擎（three.js 渲染 + cannon-es 物理，CDN 动态加载，失败自动回退 CSS 动画） ================= */
-var APP_VER='v1.7';
+var APP_VER='v1.8';
 var PHYS_CDNS=[
   // 同源 vendor 优先：GitHub Pages 部署后无需外网 CDN（file:// 打开时会被 CORS 拦，自动落到下面的 CDN）
   ['./vendor/three.module.js','./vendor/cannon-es.js'],
@@ -66707,7 +66708,7 @@ function agitateShake(s,dx,dz){
 function endShakeSession(){
   if(!shakeCtx||shakeCtx.settling)return;
   shakeCtx.settling=true;
-  PHYS_STATE.setGravity(0,-55,0); // 手机已静止：恢复标准重力，骰子自然落底
+  PHYS_STATE.setGravity(0,-85,0,0,0,0); // 手机已静止：恢复标准重力与盒位，骰子自然落底
   PHYS_STATE.requestSettle();
   setPhysStat(shakeCtx.roll.trayEl,'落定中…');
 }
@@ -66764,7 +66765,7 @@ function launchDice(trayEl,specs,power,results,onDone,klass){
 function createPhysEngine(THREE,CANNON){
   var W0=12.5,H0=7.4,DIE=1.02,CEIL0=14;
   var W=W0,H=H0,CEIL=CEIL0;
-  var renderer=null,scene=null,camera=null,world=null,groundMesh=null;
+  var renderer=null,scene=null,camera=null,world=null,groundMesh=null,boxGroup=null;
   var container=null,observer=null,raf=0;
   var active=[],ASSETS={},wallBodies=[];
   function norm3(a){var l=Math.hypot(a[0],a[1],a[2])||1;return [a[0]/l,a[1]/l,a[2]/l];}
@@ -66951,12 +66952,17 @@ function createPhysEngine(THREE,CANNON){
     dl.shadow.camera.left=-9; dl.shadow.camera.right=9;
     dl.shadow.camera.top=9; dl.shadow.camera.bottom=-9;
     scene.add(dl);
+    boxGroup=new THREE.Group();
+    var frameGeo=new THREE.EdgesGeometry(new THREE.BoxGeometry(W0,CEIL,H0));
+    boxGroup.add(new THREE.LineSegments(frameGeo,new THREE.LineBasicMaterial({color:0x9a5558,transparent:true,opacity:0.6})));
+    boxGroup.position.set(0,CEIL/2,0);
+    scene.add(boxGroup);
     var ground=new THREE.Mesh(new THREE.PlaneGeometry(W0*1.5,H0*1.5),new THREE.ShadowMaterial({opacity:0.36}));
     ground.rotation.x=-Math.PI/2; ground.position.y=0.001; ground.receiveShadow=true; scene.add(ground);
     groundMesh=ground;
-    world=new CANNON.World({gravity:new CANNON.Vec3(0,-55,0),allowSleep:true});
+    world=new CANNON.World({gravity:new CANNON.Vec3(0,-85,0),allowSleep:true});
     world.defaultContactMaterial.friction=0.35;
-    world.defaultContactMaterial.restitution=0.35;
+    world.defaultContactMaterial.restitution=0.45;
     var gb=new CANNON.Body({mass:0,shape:new CANNON.Plane()});
     gb.quaternion.setFromEuler(-Math.PI/2,0,0);
     world.addBody(gb);
@@ -67026,7 +67032,7 @@ function createPhysEngine(THREE,CANNON){
           ((col-(cols-1)/2)*D2)+(Math.random()*D2*0.28-D2*0.14),
           2.2+Math.random()*4.2+Math.floor(i/cols)*0.35,
           -(H/2-1.4)+Math.random()*(H-2.8)),
-        linearDamping:0.06,angularDamping:0.08,
+        linearDamping:0.01,angularDamping:0.08,
         allowSleep:true,sleepSpeedLimit:0.25,sleepTimeLimit:1.0
       });
       body.quaternion.setFromEuler(Math.random()*6.283,Math.random()*6.283,Math.random()*6.283);
@@ -67042,6 +67048,11 @@ function createPhysEngine(THREE,CANNON){
       world.addBody(body); // 骰子刚体必须加入物理世界（此前缺失：骰子只渲染不模拟）
       var rec={mesh:mesh,body:body,normals:a.cnormals,values:a.values,sides:sp.sides,result:0,notified:false};
       body.addEventListener('sleep',function(){ notifyIfSettled(rec); });
+      body.addEventListener('collide',function(ev){ // 真实碰撞 -> 清脆撞击声（含骰-盒壁）
+        var iv=0;
+        try{ iv=Math.abs(ev.contact.getImpactVelocityAlongNormal()); }catch(e){}
+        if(iv>1.2 && window.__impactSound) window.__impactSound(Math.min(iv/9,1));
+      });
       active.push(rec);
       sync(rec);
     });
@@ -67161,11 +67172,26 @@ function createPhysEngine(THREE,CANNON){
     for(var i=0;i<n;i++) world.step(1/60);
     return 'stepped '+n+' frames -> '+active.map(function(d,i){ return i+':y'+d.body.position.y.toFixed(2)+(d.body.sleepState>0?'(SLEEP)':''); }).join(', ');
   };
-  function setGravity(x,y,z){ if(world) world.gravity.set(x,y,z); }
+  function setGravity(gx,gy,gz,ox,oy,oz){
+    if(world) world.gravity.set(gx,gy,gz);
+    if(boxGroup){ // 可视化盒框随手机倾斜/平移（机位固定看盒内）
+      var g=new THREE.Vector3(gx,gy,gz).normalize();
+      var q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0),g);
+      boxGroup.quaternion.copy(q);
+      boxGroup.position.set(ox||0, CEIL/2+(oy||0), oz||0);
+    }
+  }
+  function resetRound(){ // 一键重置：清空回合与骰子，解锁界面
+    mode=null; shakeCtx=null;
+    stopLoop(); clearDice();
+    if(world) world.gravity.set(0,-85,0);
+    if(boxGroup){ boxGroup.quaternion.set(0,0,0,1); boxGroup.position.set(0,CEIL/2,0); }
+    renderer.render(scene,camera);
+  }
   return {
     attach:attach, resize:resize, throwDice:throwDice,
     startSession:startSession, agitate:agitate, requestSettle:requestSettle,
-    setGravity:setGravity,
+    setGravity:setGravity, resetRound:resetRound,
     dom:function(){ return renderer.domElement; }
   };
 }
@@ -67446,6 +67472,11 @@ function disableShake(){
   shakeOn=false; btnShake.classList.remove('on'); btnShake.textContent='📳 摇一摇';
   shakebar.classList.remove('on'); meterFill.style.width='0%';
 }
+var lastImpactT=0;
+window.__impactSound=function(vol){ // 骰子真实碰撞事件回调（引擎 collide 触发）
+  var t=performance.now(); if(t-lastImpactT<70)return; lastImpactT=t;
+  clack(0.22+vol*0.55);
+};
 /* 真实摇盅模型：手机坐标系 = 盒子坐标系。
    加速度计读数 = 重力（低频，随手机倾斜旋转）+ 甩动加速度（高频）。
    每次事件把「旋转后的重力 + 反向甩动惯性力」写进物理引擎的重力向量——
@@ -67469,21 +67500,25 @@ function onMotion(e){
   // 手机系 -> 盒系映射（竖屏摇骰默认：手机x=盒左右，手机y=盒前后，手机z=盒上下；方向不对改这三个符号/顺序）
   var gl={x:gLow.x, y:gLow.y, z:gLow.z};
   var la={x:lin.x, y:lin.y, z:lin.z};
-  var G=55, IG=5.5; // 等效重力强度 / 惯性力增益
+    var IG=9; // 惯性力增益（等效重力强度 G2=85 在下方映射处使用）
   if(PHYS_STATE && PHYS_STATE.setGravity && shakeCtx && !shakeCtx.settling){
     var glen=Math.hypot(gl.x,gl.y,gl.z)||1;
-    // 盒内有效重力 = 旋转后的重力（手机倾斜）+ 反向甩动惯性力（盒子平移）
+    // 手机系合成向量（重力 + 反向甩动惯性力），再映射到盒系：
+    // 基准 = 手机平放桌面（读数 gLow.z≈+9.8）时盒内水平向下；F(x,y,z)=(x, z, -y)
+    var G2=85, IG=9;
+    var wx=-gl.x/glen*G2 - la.x*IG;
+    var wy=-gl.y/glen*G2 - la.y*IG;
+    var wz=-gl.z/glen*G2 - la.z*IG;
     PHYS_STATE.setGravity(
-      -gl.x/glen*G - la.x*IG,
-      -gl.y/glen*G - la.y*IG,
-      -gl.z/glen*G - la.z*IG);
+      wx, wz, -wy,
+      clamp(-la.x*0.22,-1.6,1.6), clamp(la.z*0.10,-1.2,1.2), clamp(-la.y*0.22,-1.6,1.6));
   }
-  var sens=parseInt(sensEl.value,10)||16;
+  var sens=parseInt(sensEl.value,10)||10;
   var shakeMag=sens*0.9;
   if(mag>=shakeMag && !rolling && document.visibilityState==='visible'){
     if(PHYS_STATE && now-lastTrig>130){ // 持续甩动：每次超过阈值注入一次冲量（130ms 跟手）
       lastTrig=now;
-      if(!shakeCtx) startShakeSession(clamp(Math.round(mag/12),0,3));
+      if(!shakeCtx) startShakeSession(clamp(Math.round(mag/10),0,3));
       if(shakeCtx&&!shakeCtx.settling){
         var s=clamp(0.3+mag/26,0.3,1.5);
         var dx=clamp(la.x/12,-1,1), dz=clamp(la.y/12,-1,1);
@@ -67591,6 +67626,16 @@ stpNeed =stepper('stpNeed',0,10,noop);
   });
   document.querySelector('.bar').appendChild(tag);
 })();
+document.getElementById('btnReset').addEventListener('click',function(){ // 一键重置：任何时候可点
+  if(PHYS_STATE&&PHYS_STATE.resetRound)PHYS_STATE.resetRound();
+  if(PHYS_STATE&&PHYS_STATE.setGravity)PHYS_STATE.setGravity(0,-85,0,0,0,0);
+  shakeCtx=null; rolling=false; rollBtn.disabled=false; lastPower=null;
+  if(shakeOn)disableShake();
+  poolTray.innerHTML='<span class="empty">已重置 —— 设置参数后按「掷骰」或开启摇一摇</span>';
+  genTray.innerHTML='<span class="empty">已重置 —— 输入表达式后按「掷骰」</span>';
+  shakeStatus('已重置回初始状态');
+  updateRollLabel();
+});
 bindShakeDrag(poolTray);
 bindShakeDrag(document.getElementById('genTray'));
 loadCfg();
