@@ -178,6 +178,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 }
 .rollbtn:active{transform:translateY(1px)}
 .rollbtn:disabled{filter:grayscale(.65);opacity:.65;box-shadow:none}
+.verTag{position:fixed;right:8px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:50;font-size:10px;color:#6b5c55;background:#141110cc;border:1px solid var(--line);border-radius:6px;padding:2px 6px;user-select:none}
 .barhint{max-width:760px;margin:7px auto 0;text-align:center;font-size:10.5px;color:#6b5c55;line-height:1.6}
 </style>
 </head>
@@ -296,6 +297,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
 <div class="bar">
   <button class="rollbtn" id="rollBtn" type="button">掷　骰</button>
+  <div id="verTag">v1.3</div>
   <div class="barhint">手机端：开启「摇一摇」后持续甩动手机就是在摇骰盒，停下即自动结算（甩得猛掷得猛）· 桌面端：单击骰盘/按钮/空格=单发抛掷，按住骰盘拖动=摇盒，松开结算<br>⚠ 运动传感器需 HTTPS（或 localhost）· 物理引擎首次掷骰需联网加载，失败自动退回简化动画</div>
 </div>
 
@@ -444,10 +446,12 @@ function renderTray(trayEl,items){
 }
 
 /* ================= 物理骰子引擎（three.js 渲染 + cannon-es 物理，CDN 动态加载，失败自动回退 CSS 动画） ================= */
+var APP_VER='v1.3';
 var PHYS_CDNS=[
+  // 同源 vendor 优先：GitHub Pages 部署后无需外网 CDN（file:// 打开时会被 CORS 拦，自动落到下面的 CDN）
+  ['./vendor/three.module.js','./vendor/cannon-es.js'],
   ['https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js','https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js'],
-  ['https://unpkg.com/three@0.160.0/build/three.module.js','https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js'],
-  ['https://registry.npmmirror.com/three/0.160.0/files/build/three.module.js','https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js']
+  ['https://unpkg.com/three@0.160.0/build/three.module.js','https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js']
 ];
 var PHYS_STATE; // undefined=未尝试, false=加载失败, 引擎对象
 function _dynImport(u){ try{ return new Function('u','return import(u);')(u); }catch(e){ return Promise.reject(e); } }
@@ -813,9 +817,10 @@ function createPhysEngine(THREE,CANNON){
   /* ---- 场景 / 物理世界 ---- */
   function ensure(){
     if(renderer) return;
-    renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
-    renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+    var coarse=window.matchMedia&&window.matchMedia('(pointer:coarse)').matches; // 手机/平板
+    renderer=new THREE.WebGLRenderer({alpha:true,antialias:!coarse});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,coarse?1.5:2));
+    renderer.shadowMap.enabled=true; renderer.shadowMap.type=coarse?THREE.PCFShadowMap:THREE.PCFSoftShadowMap;
     renderer.domElement.className='physCanvas';
     scene=new THREE.Scene();
     camera=new THREE.PerspectiveCamera(42,2,0.1,150);
@@ -823,7 +828,7 @@ function createPhysEngine(THREE,CANNON){
     scene.add(new THREE.AmbientLight(0xffffff,1.6));
     var dl=new THREE.DirectionalLight(0xffffff,2.2);
     dl.position.set(4.5,12,5); dl.castShadow=true;
-    dl.shadow.mapSize.set(1024,1024);
+    dl.shadow.mapSize.set(coarse?512:1024,coarse?512:1024);
     dl.shadow.camera.left=-9; dl.shadow.camera.right=9;
     dl.shadow.camera.top=9; dl.shadow.camera.bottom=-9;
     scene.add(dl);
@@ -1411,6 +1416,20 @@ stpKap  =stepper('stpKap',0,6,updateRollLabel);
 stpAbility=stepper('stpAbility',-10,20,noop);
 stpGear =stepper('stpGear',-10,20,noop);
 stpNeed =stepper('stpNeed',0,10,noop);
+(function(){ // 版本徽标 + 诊断（连点 3 次查看引擎错误/状态，方便远程报障）
+  var tag=document.createElement('div');
+  tag.className='verTag'; tag.textContent=APP_VER;
+  tag.addEventListener('click',function(){
+    tag.__n=(tag.__n||0)+1;
+    if(tag.__n<3)return;
+    tag.__n=0;
+    var dbg='';
+    try{ dbg=window._diceDebug?window._diceDebug():'引擎未创建'; }catch(e){ dbg='诊断ERR '+e.message; }
+    var errs=(window._physErr||[]).slice(-5).join(' | ')||'无';
+    alert(APP_VER+' | 状态: '+dbg+' | 最近错误: '+errs+' | UA: '+navigator.userAgent.slice(0,80));
+  });
+  document.querySelector('.bar').appendChild(tag);
+})();
 bindShakeDrag(poolTray);
 bindShakeDrag(document.getElementById('genTray'));
 loadCfg();
