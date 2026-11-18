@@ -1,5 +1,12 @@
 # 骰子模拟器 · MVK 骰池工具
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![ Online](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-GitHub%20Pages-2ea44f)
+![No Build](https://img.shields.io/badge/%E6%9E%84%E5%BB%BA-%E9%9B%B6%E4%BE%9D%E8%B5%96%E5%8D%95%E6%96%87%E4%BB%B6-orange)
+
+**在线体验**：https://z1343859526-maker.github.io/dice-simulator/ （手机扫码见 `qr-github-pages.png`）
+**源码仓库**：https://github.com/z1343859526-maker/dice-simulator
+
 单文件网页骰子工具，为《Marxist Vampire Killers》备团定制，也内置通用掷骰模式。
 **零构建、单文件**——整个工具就是一个 `index.html`，双击即用。
 
@@ -84,4 +91,12 @@ dice-simulator/
 - [MajorVictory/3DDiceRoller](https://github.com/MajorVictory/3DDiceRoller) — 经典开源 3D 骰桌（源自 Anton Natarov 的著名实现）
 - 摇动检测原理参考 [MDN: DeviceMotionEvent.requestPermission()](https://developer.mozilla.org/en-US/docs/Web/API/DeviceMotionEvent/requestPermission_static)
 
-本工具为了**零依赖、离线可用**，没有引入 three.js/物理引擎，改用 CSS 3D 变换 + 缓动曲线模拟投掷手感；如果日后想要骰子互相碰撞的物理效果，dice-box 是首选升级路径。
+## 开源许可
+
+本项目以 [MIT License](LICENSE) 开源——可自由使用、修改、分发，也欢迎 PR。
+
+内置的第三方库同样为 MIT 许可，在此致谢：
+- [three.js](https://github.com/mrdoob/three.js) — 3D 渲染（MIT）
+- [cannon-es](https://github.com/pmndrs/cannon-es) — 刚体物理引擎（MIT）
+
+《Marxist Vampire Killers》为 Spiral Lemniscate Games（Scott Allan Stubbe）的作品，本工具仅为粉丝自制的跑团辅助，与其官方无关。
