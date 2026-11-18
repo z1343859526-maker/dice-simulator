@@ -83,7 +83,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
 /* ---------- dice tray ---------- */
 .tray{
-  position:relative;min-height:260px;display:flex;flex-wrap:wrap;gap:16px 14px;align-items:center;justify-content:center;
+  position:relative;min-height:260px;touch-action:none;display:flex;flex-wrap:wrap;gap:16px 14px;align-items:center;justify-content:center;
   padding:20px 10px;margin-top:12px;border-radius:14px;border:1px dashed var(--line);
   background:radial-gradient(ellipse at 50% 28%,#261a19 0%,#171211 72%);
 }
@@ -296,7 +296,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
 <div class="bar">
   <button class="rollbtn" id="rollBtn" type="button">掷　骰</button>
-  <div class="barhint">桌面端：点击按钮或按 空格键 掷骰 · 手机端：点右上角「摇一摇」授权后甩动手机掷骰 —— 甩得越猛，骰子掷得越猛（真实物理投掷）<br>⚠ 运动传感器需要 HTTPS（或 localhost）环境 · 物理引擎（three.js/cannon-es）首次掷骰需联网加载，失败时自动退回简化动画</div>
+  <div class="barhint">手机端：开启「摇一摇」后持续甩动手机就是在摇骰盒，停下即自动结算（甩得猛掷得猛）· 桌面端：单击骰盘/按钮/空格=单发抛掷，按住骰盘拖动=摇盒，松开结算<br>⚠ 运动传感器需 HTTPS（或 localhost）· 物理引擎首次掷骰需联网加载，失败自动退回简化动画</div>
 </div>
 
 <script>
@@ -484,7 +484,8 @@ function setPhysStat(trayEl,msg){
   if(!el){ el=document.createElement('div'); el.className='physStat'; trayEl.appendChild(el); }
   el.textContent=msg;
 }
-function physicalRoll(engine,trayEl,specs,power,results,onDone){
+function mountPhysTray(trayEl,specs,results){
+  var engine=PHYS_STATE;
   engine.attach(trayEl);
   trayEl.innerHTML='';
   trayEl.appendChild(engine.dom());
@@ -494,15 +495,128 @@ function physicalRoll(engine,trayEl,specs,power,results,onDone){
     t.innerHTML='<span class="t-plain">…</span>'; tagsRow.appendChild(t); return t;
   });
   results.forEach(function(r,i){ r.tag=tags[i]; });
+}
+function paintTag(results,i){
+  var r=results[i];
+  r.tag.innerHTML = r._pool ? poolTagHTML(r.v,r._mod,r.kap) : '<b class="t-ok">'+r.v+'</b>';
+}
+function physicalRoll(engine,trayEl,specs,power,results,onDone){
+  mountPhysTray(trayEl,specs,results);
   if(power>0) setPhysStat(trayEl,'物理模拟 · 投掷力度 '+(1+power)+' 档');
   engine.throwDice(specs,power,{
     onDie:function(i,v){
-      results[i].v=v;
-      tags[i].innerHTML = results[i]._pool ? poolTagHTML(v,results[i]._mod,results[i].kap)
-                                           : '<b class="t-ok">'+v+'</b>';
+      results[i].v=v; paintTag(results,i);
       clack(0.55+power*0.12);
     },
     onDone:onDone
+  });
+}
+/* ---- 持续摇盒会话：甩动=甩盒子，停下=落定结算 ---- */
+var shakeCtx=null;
+function buildActiveRoll(){ // 按当前标签页构建一回合
+  if(activeTab==='pool'){
+    var cfg=readPoolCfg(),specs=[],i;
+    for(i=0;i<cfg.n;i++)specs.push({sides:20,kap:false});
+    for(i=0;i<cfg.k;i++)specs.push({sides:20,kap:true});
+    if(!specs.length)return null;
+    var results=specs.map(function(s){ return {v:0,kap:s.kap,_pool:true,_mod:cfg.ab+cfg.gear}; });
+    return {mode:'pool',trayEl:poolTray,cfg:cfg,specs:specs,results:results,tmpl:null,parsed:null};
+  }
+  var parsed=parseNotation(notationEl.value);
+  if(!parsed)return null;
+  var gs=[],tmpl=[];
+  parsed.terms.forEach(function(t){
+    for(var i=0;i<t.n;i++){
+      if(t.d>=4&&t.d<=20&&gs.length<16){ tmpl.push({die:gs.length}); gs.push({sides:t.d,kap:false}); }
+      else tmpl.push({v:rnd(t.d),d:t.d,sign:t.sign});
+    }
+  });
+  var gres=gs.map(function(s){ return {v:0,kap:false,_pool:false,sides:s.sides,sign:s.sign}; });
+  return {mode:'gen',trayEl:document.getElementById('genTray'),parsed:parsed,specs:gs,results:gres,tmpl:tmpl,cfg:null};
+}
+function settleDone(){ // 摇盒结算完成：统一收尾
+  var c=shakeCtx;
+  try{
+    if(!c)return;
+    if(c.roll.mode==='pool'){
+      var cfg=c.roll.cfg,res=c.roll.results;
+      if(res.every(function(r){return r.v>0;})) evaluatePool(res,cfg);
+    }else{
+      var vals=c.roll.tmpl.map(function(e){
+        return e.die!=null ? {v:c.roll.results[e.die].v,d:c.roll.specs[e.die].sides,sign:c.roll.specs[e.die].sign}
+                           : {v:e.v,d:e.d,sign:e.sign};
+      });
+      showGenResult(c.roll.parsed,vals);
+    }
+  }
+  finally{
+    rolling=false; rollBtn.disabled=false; updateRollLabel();
+    shakeCtx=null;
+  }
+}
+function startShakeSession(power){
+  if(rolling||!PHYS_STATE)return false;
+  var roll=buildActiveRoll();
+  if(!roll)return false;
+  if(roll.mode==='gen'&&!roll.specs.length){ // 纯常数：直接出结果
+    var vals0=roll.tmpl.map(function(e){ return {v:e.v,d:e.d,sign:e.sign}; });
+    showGenResult(roll.parsed,vals0);
+    return false;
+  }
+  ensureAC();
+  rolling=true; rollBtn.disabled=true; lastPower=null;
+  mountPhysTray(roll.trayEl,roll.specs,roll.results);
+  PHYS_STATE.startSession(roll.specs,{
+    onDie:function(i,v){ roll.results[i].v=v; paintTag(roll.results,i); clack(0.45); },
+    onDone:settleDone
+  });
+  PHYS_STATE.agitate(0.5+power*0.25,(Math.random()-0.5)*2,(Math.random()-0.5)*2);
+  shakeCtx={roll:roll,lastShakeAt:Date.now(),settling:false};
+  setPhysStat(roll.trayEl,'摇骰中… 甩动盒子，停下即自动结算');
+  if(navigator.vibrate)navigator.vibrate(20);
+  return true;
+}
+function agitateShake(s,dx,dz){
+  if(!shakeCtx||shakeCtx.settling)return;
+  PHYS_STATE.agitate(s,dx,dz);
+  shakeCtx.lastShakeAt=Date.now();
+}
+function endShakeSession(){
+  if(!shakeCtx||shakeCtx.settling)return;
+  shakeCtx.settling=true;
+  PHYS_STATE.requestSettle();
+  setPhysStat(shakeCtx.roll.trayEl,'落定中…');
+}
+setInterval(function(){ // 停止甩动 0.9 秒后自动结算
+  if(shakeCtx&&!shakeCtx.settling&&Date.now()-shakeCtx.lastShakeAt>900) endShakeSession();
+},250);
+function bindShakeDrag(trayEl){ // 桌面端：按住骰盘拖动 = 摇盒
+  var st=null;
+  trayEl.addEventListener('pointerdown',function(ev){
+    loadPhys(); // 预加载物理引擎（首次拖拽即可摇盒）
+    if(!PHYS_STATE)return;
+    if(rolling&&!shakeCtx)return;
+    ensureAC();
+    st={x:ev.clientX,y:ev.clientY,moved:false};
+  });
+  trayEl.addEventListener('pointermove',function(ev){
+    if(!st)return;
+    var dx=ev.clientX-st.x, dy=ev.clientY-st.y;
+    if(!st.moved){
+      if(Math.abs(dx)+Math.abs(dy)<12)return;
+      st.moved=true;
+      startShakeSession(1);
+    }
+    if(shakeCtx&&!shakeCtx.settling){
+      agitateShake(clamp(Math.hypot(dx,dy)/60,0.3,1.4), clamp(dx/25,-1,1), clamp(dy/25,-1,1));
+    }
+    st.x=ev.clientX; st.y=ev.clientY;
+    ev.preventDefault();
+  });
+  window.addEventListener('pointerup',function(){
+    if(st&&st.moved&&shakeCtx&&!shakeCtx.settling) setTimeout(endShakeSession,350);
+    else if(st&&!st.moved&&!rolling) triggerRoll(); // 单击骰盘=单发抛掷
+    st=null;
   });
 }
 function cssRoll(trayEl,specs,power,results,onDone,klass){
@@ -523,7 +637,7 @@ function launchDice(trayEl,specs,power,results,onDone,klass){
   });
 }
 function createPhysEngine(THREE,CANNON){
-  var W=12.5,H=7.4,DIE=1.02;
+  var W=12.5,H=7.4,DIE=1.02,CEIL=12;
   var renderer=null,scene=null,camera=null,world=null;
   var container=null,observer=null,raf=0;
   var active=[],ASSETS={};
@@ -718,13 +832,16 @@ function createPhysEngine(THREE,CANNON){
     gb.quaternion.setFromEuler(-Math.PI/2,0,0);
     world.addBody(gb);
     function wall(x,z,ry){
-      var b=new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(W/2+2,6,0.5))});
-      b.position.set(x,6,z);
+      var b=new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(W/2+2,CEIL,0.5))});
+      b.position.set(x,CEIL/2,z);
       if(ry)b.quaternion.setFromEuler(0,ry,0);
       world.addBody(b);
     }
     wall(0,-H/2-0.5,0); wall(0,H/2+0.5,0);
     wall(-W/2-0.5,0,Math.PI/2); wall(W/2+0.5,0,Math.PI/2);
+    var ceil=new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(W/2+2,0.5,H/2+2))});
+    ceil.position.set(0,CEIL+0.5,0);
+    world.addBody(ceil);
   }
   function attach(c){
     ensure();
@@ -757,23 +874,13 @@ function createPhysEngine(THREE,CANNON){
     active.forEach(function(d){ world.removeBody(d.body); scene.remove(d.mesh); });
     active=[];
   }
-  function throwDice(specs,power,cbs){
+  /* ---- 回合管理：mode = 单发抛掷(throw) 或 持续摇盒(session) ---- */
+  var mode=null,lastLoop=0;
+  function ensureLoop(){ if(!raf) loopFrame(); }
+  function stopLoop(){ if(raf){ cancelAnimationFrame(raf); raf=0; } }
+  function clMag(v,m){ return Math.max(-m,Math.min(m,v)); }
+  function spawnDice(specs,throwing,power){
     clearDice();
-    var finished=false,landed=0,lastLoop=performance.now();
-    function finish(){
-      if(finished)return; finished=true;
-      if(raf){ cancelAnimationFrame(raf); raf=0; }
-      renderer.render(scene,camera);
-      if(cbs.onDone)cbs.onDone();
-    }
-    function readResultLocal(d){ return readResult(d); }
-    function forceFinish(){ // 兜底：唤醒未结算的骰子并按当前姿态读数
-      active.forEach(function(rec,i){
-        if(!rec.result)rec.result=readResultLocal(rec);
-        if(!rec.notified){ rec.notified=true; if(cbs.onDie)cbs.onDie(i,rec.result); }
-      });
-      finish();
-    }
     var n=specs.length,perRow=Math.min(n,5);
     specs.forEach(function(sp,i){
       var a=buildAssets(sp.sides,sp.kap?'kap':'gen');
@@ -790,46 +897,114 @@ function createPhysEngine(THREE,CANNON){
         allowSleep:true,sleepSpeedLimit:0.25,sleepTimeLimit:1.0
       });
       body.quaternion.setFromEuler(Math.random()*6.283,Math.random()*6.283,Math.random()*6.283);
-      var pw=1+(power||0);
-      body.velocity.set(
-        (Math.random()*2-1)*(1.2+pw*0.8),
-        1.5+Math.random()*1.5,
-        -(9+pw*3.5+Math.random()*3));
-      var s=10+pw*10;
-      body.angularVelocity.set((Math.random()*2-1)*s,(Math.random()*2-1)*s,(Math.random()*2-1)*s);
+      if(throwing){
+        var pw=1+(power||0);
+        body.velocity.set(
+          (Math.random()*2-1)*(1.2+pw*0.8),
+          1.5+Math.random()*1.5,
+          -(9+pw*3.5+Math.random()*3));
+        var s=10+pw*10;
+        body.angularVelocity.set((Math.random()*2-1)*s,(Math.random()*2-1)*s,(Math.random()*2-1)*s);
+      }
       var rec={mesh:mesh,body:body,normals:a.cnormals,values:a.values,sides:sp.sides,result:0,notified:false};
-      body.addEventListener('sleep',function(){
-        if(rec.notified)return;
-        rec.notified=true; rec.result=readResultLocal(rec); landed++;
-        if(cbs.onDie)cbs.onDie(i,rec.result);
-        if(landed>=specs.length)finish();
-      });
+      body.addEventListener('sleep',function(){ notifyIfSettled(rec); });
       active.push(rec);
       sync(rec);
     });
-    (function scheduleForce(){ // 8 秒未自然落定则强制结算；标签退后台(rAF 暂停)时顺延，避免读到冻结姿态
-      setTimeout(function(){
-        if(finished)return;
-        if(performance.now()-lastLoop>1500){ scheduleForce(); return; }
-        forceFinish();
-      },8000);
-    })();
-    function loop(){
-      if(finished)return;
-      raf=requestAnimationFrame(loop);
-      lastLoop=performance.now();
-      try{ world.step(1/60); }
-      catch(e){
-        (window._physErr=window._physErr||[]).push('STEP: '+String(e&&e.message||e));
-        finish(); return;
-      }
-      active.forEach(sync);
-      renderer.render(scene,camera);
-    }
-    loop();
   }
+  /* 单发抛掷（按钮/空格） */
+  function throwDice(specs,power,cbs){
+    spawnDice(specs,true,power);
+    mode={type:'throw',cbs:cbs,landed:0,finished:false,startT:performance.now()};
+    ensureLoop();
+  }
+  function notifyIfSettled(rec){
+    if(rec.notified||!mode)return;
+    rec.notified=true; rec.result=readResult(rec);
+    var idx=active.indexOf(rec);
+    if(mode.type==='throw'){
+      mode.landed++;
+      if(mode.cbs.onDie)mode.cbs.onDie(idx,rec.result);
+      if(mode.landed>=active.length) finishActive();
+    }else if(mode.type==='session'&&mode.state==='settling'){
+      if(mode.cbs.onDie)mode.cbs.onDie(idx,rec.result);
+    }
+  }
+  function finishActive(){ // 单发兜底：按当前姿态读数
+    if(!mode||mode.finished)return;
+    mode.finished=true;
+    var m=mode; mode=null;
+    active.forEach(function(rec,i){
+      if(!rec.result)rec.result=readResult(rec);
+      if(!rec.notified){ rec.notified=true; if(m.cbs&&m.cbs.onDie)m.cbs.onDie(i,rec.result); }
+    });
+    renderer.render(scene,camera);
+    stopLoop();
+    if(m.cbs&&m.cbs.onDone)m.cbs.onDone();
+  }
+  /* 持续摇盒：按当前配置把骰子装进封闭盒子（静置，速度 0） */
+  function startSession(specs,cbs){
+    spawnDice(specs,false,0);
+    mode={type:'session',state:'shaking',cbs:cbs,startT:performance.now(),finished:false};
+    ensureLoop();
+  }
+  /* 甩盒：向全部骰子注入冲量（s=强度0.3~1.6，dx/dz=甩动方向-1~1） */
+  function agitate(s,dx,dz){
+    if(!mode||mode.type!=='session'||mode.state!=='shaking')return;
+    mode.lastShake=performance.now();
+    if(!dx&&!dz){ dx=(Math.random()-0.5)*2; dz=(Math.random()-0.5)*2; }
+    active.forEach(function(d){
+      var v=d.body.velocity,w=d.body.angularVelocity;
+      v.x=clMag(v.x+dx*(5+13*s)+(Math.random()-0.5)*2.5,26);
+      v.y=Math.min(v.y+(2.5+7*s),15);
+      v.z=clMag(v.z+dz*(5+13*s)+(Math.random()-0.5)*2.5,26);
+      var j=10+22*s;
+      w.x=clMag(w.x+(Math.random()-0.5)*j,30);
+      w.y=clMag(w.y+(Math.random()-0.5)*j,30);
+      w.z=clMag(w.z+(Math.random()-0.5)*j,30);
+    });
+  }
+  /* 停止甩动 → 进入落定阶段 */
+  function requestSettle(){
+    if(!mode||mode.type!=='session'||mode.state!=='shaking')return false;
+    mode.state='settling'; mode.settleStart=performance.now();
+    return true;
+  }
+  /* 主循环（单发与摇盒共用） */
+  function loopFrame(){
+    raf=requestAnimationFrame(loopFrame);
+    lastLoop=performance.now();
+    try{ world.step(1/60); }
+    catch(e){
+      (window._physErr=window._physErr||[]).push('STEP: '+String(e&&e.message||e));
+      finishActive(); return;
+    }
+    active.forEach(sync);
+    renderer.render(scene,camera);
+    if(!mode)return;
+    if(mode.type==='throw'){
+      if(performance.now()-mode.startT>8000) finishActive(); // 单发 8s 兜底
+    }else if(mode.type==='session'&&mode.state==='settling'){
+      var calm=active.every(function(d){
+        return d.body.velocity.length()<0.16&&d.body.angularVelocity.length()<0.2;
+      });
+      var dt=performance.now()-mode.settleStart;
+      if((calm&&dt>500)||dt>6000){ // 全部静止（或 6s 兜底）→ 读面结算
+        var m=mode; mode=null;
+        active.forEach(function(rec,i){
+          rec.result=readResult(rec);
+          if(!rec.notified){ rec.notified=true; if(m.cbs&&m.cbs.onDie)m.cbs.onDie(i,rec.result); }
+        });
+        renderer.render(scene,camera);
+        stopLoop();
+        if(m.cbs&&m.cbs.onDone)m.cbs.onDone();
+      }
+    }
+  }
+  window._diceDebug=function(){ return 'mode='+(mode?mode.type+':'+(mode.state||''):'null')+' y='+active.map(function(d){ return d.body.position.y.toFixed(1); }).join(','); };
   return {
     attach:attach, resize:resize, throwDice:throwDice,
+    startSession:startSession, agitate:agitate, requestSettle:requestSettle,
     dom:function(){ return renderer.domElement; }
   };
 }
@@ -1116,11 +1291,22 @@ function onMotion(e){
       meterFill.style.width=clamp(meterPend/40*100,0,100)+'%';
     });
     var sens=parseInt(sensEl.value,10)||16;
-    if(delta>=sens && now-lastTrig>1200 && !rolling && document.visibilityState==='visible'){
-      lastTrig=now;
-      lastPower=clamp(Math.round((delta-sens)/14),0,3); // 甩得越狠翻滚越久
-      if(navigator.vibrate) navigator.vibrate(35);
-      triggerRoll();
+    if(delta>=sens && !rolling && document.visibilityState==='visible'){
+      if(PHYS_STATE && now-lastTrig>220){ // 真物理：甩手机 = 持续甩盒子
+        lastTrig=now;
+        if(!shakeCtx) startShakeSession(clamp(Math.round((delta-sens)/14),0,3));
+        if(shakeCtx&&!shakeCtx.settling){
+          var s=clamp(0.35+(delta-sens)/sens*0.5,0.35,1.6);
+          var dx=clamp(-a.x/10,-1,1), dz=clamp(-a.z/10,-1,1); // 甩动方向映射到盒面
+          agitateShake(s,dx,dz);
+          if(navigator.vibrate)navigator.vibrate(15);
+        }
+      }else if(!PHYS_STATE && now-lastTrig>1200){ // 简化动画回退：甩一下掷一次
+        lastTrig=now;
+        lastPower=clamp(Math.round((delta-sens)/14),0,3);
+        if(navigator.vibrate) navigator.vibrate(35);
+        triggerRoll();
+      }
     }
   }
   lastAcc={x:a.x,y:a.y,z:a.z};
@@ -1139,9 +1325,10 @@ btnShake.addEventListener('click',function(){
   }
   var go=function(){
     window.addEventListener('devicemotion',onMotion);
+    loadPhys(); // 预加载物理引擎，甩动即摇盒
     shakeOn=true; btnShake.classList.add('on'); btnShake.textContent='📳 摇一摇：开';
     shakebar.classList.add('on');
-    shakeStatus('已启用 —— 甩动手机即可掷骰；甩得越狠，骰子翻滚越久');
+    shakeStatus('已启用 —— 持续甩动手机就是在摇骰盒，停下即自动结算');
   };
   try{
     if(typeof DeviceMotionEvent.requestPermission==='function'){ // iOS 13+ Safari
@@ -1204,6 +1391,8 @@ stpKap  =stepper('stpKap',0,6,updateRollLabel);
 stpAbility=stepper('stpAbility',-10,20,noop);
 stpGear =stepper('stpGear',-10,20,noop);
 stpNeed =stepper('stpNeed',0,10,noop);
+bindShakeDrag(poolTray);
+bindShakeDrag(document.getElementById('genTray'));
 loadCfg();
 renderHist();
 updateRollLabel();
