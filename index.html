@@ -66521,7 +66521,7 @@ function renderTray(trayEl,items){
 }
 
 /* ================= 物理骰子引擎（three.js 渲染 + cannon-es 物理，CDN 动态加载，失败自动回退 CSS 动画） ================= */
-var APP_VER='v1.4';
+var APP_VER='v1.5';
 var PHYS_CDNS=[
   // 同源 vendor 优先：GitHub Pages 部署后无需外网 CDN（file:// 打开时会被 CORS 拦，自动落到下面的 CDN）
   ['./vendor/three.module.js','./vendor/cannon-es.js'],
@@ -67009,6 +67009,7 @@ function createPhysEngine(THREE,CANNON){
         var s=10+pw*10;
         body.angularVelocity.set((Math.random()*2-1)*s,(Math.random()*2-1)*s,(Math.random()*2-1)*s);
       }
+      world.addBody(body); // 骰子刚体必须加入物理世界（此前缺失：骰子只渲染不模拟）
       var rec={mesh:mesh,body:body,normals:a.cnormals,values:a.values,sides:sp.sides,result:0,notified:false};
       body.addEventListener('sleep',function(){ notifyIfSettled(rec); });
       active.push(rec);
@@ -67022,16 +67023,19 @@ function createPhysEngine(THREE,CANNON){
     ensureLoop();
   }
   function notifyIfSettled(rec){
-    if(rec.notified||!mode)return;
-    rec.notified=true; rec.result=readResult(rec);
+    if(!mode)return;
     var idx=active.indexOf(rec);
     if(mode.type==='throw'){
-      mode.landed++;
+      if(rec.notified)return;
+      rec.notified=true; rec.result=readResult(rec); mode.landed++;
       if(mode.cbs.onDie)mode.cbs.onDie(idx,rec.result);
       if(mode.landed>=active.length) finishActive();
     }else if(mode.type==='session'&&mode.state==='settling'){
+      if(rec.notified)return;
+      rec.notified=true; rec.result=readResult(rec);
       if(mode.cbs.onDie)mode.cbs.onDie(idx,rec.result);
     }
+    // 摇动阶段（shaking）的睡眠：仅物理休眠，不标记、不回调
   }
   function finishActive(){ // 单发兜底：按当前姿态读数
     if(!mode||mode.finished)return;
@@ -67057,6 +67061,7 @@ function createPhysEngine(THREE,CANNON){
     mode.lastShake=performance.now();
     if(!dx&&!dz){ dx=(Math.random()-0.5)*2; dz=(Math.random()-0.5)*2; }
     active.forEach(function(d){
+      if(d.body.sleepState>0) d.body.wakeUp(); // 关键：睡眠中的骰子不参与物理积分，必须先唤醒，否则甩动无效
       var v=d.body.velocity,w=d.body.angularVelocity;
       // NaN 防护：偶发数值发散时重置该骰，避免污染整个物理世界
       if(!isFinite(v.x+v.y+v.z+w.x+w.y+w.z)||!isFinite(d.body.position.x+d.body.position.y+d.body.position.z)){
@@ -67111,7 +67116,8 @@ function createPhysEngine(THREE,CANNON){
         var m=mode; mode=null;
         active.forEach(function(rec,i){
           rec.result=readResult(rec);
-          if(!rec.notified){ rec.notified=true; if(m.cbs&&m.cbs.onDie)m.cbs.onDie(i,rec.result); }
+          rec.notified=true;
+          if(m.cbs&&m.cbs.onDie)m.cbs.onDie(i,rec.result);
         });
         renderer.render(scene,camera);
         stopLoop();
@@ -67120,6 +67126,11 @@ function createPhysEngine(THREE,CANNON){
     }
   }
   window._diceDebug=function(){ return 'mode='+(mode?mode.type+':'+(mode.state||''):'null')+' y='+active.map(function(d){ return d.body.position.y.toFixed(1); }).join(','); };
+  window._physManual=function(n){ // 诊断：手动推进物理 n 帧（绕过 rAF）
+    if(!world) return 'no world';
+    for(var i=0;i<n;i++) world.step(1/60);
+    return 'stepped '+n+' frames -> '+active.map(function(d,i){ return i+':y'+d.body.position.y.toFixed(2)+(d.body.sleepState>0?'(SLEEP)':''); }).join(', ');
+  };
   return {
     attach:attach, resize:resize, throwDice:throwDice,
     startSession:startSession, agitate:agitate, requestSettle:requestSettle,
