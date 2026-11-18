@@ -66528,7 +66528,7 @@ function renderTray(trayEl,items){
 }
 
 /* ================= 物理骰子引擎（three.js 渲染 + cannon-es 物理，CDN 动态加载，失败自动回退 CSS 动画） ================= */
-var APP_VER='v1.6';
+var APP_VER='v1.7';
 var PHYS_CDNS=[
   // 同源 vendor 优先：GitHub Pages 部署后无需外网 CDN（file:// 打开时会被 CORS 拦，自动落到下面的 CDN）
   ['./vendor/three.module.js','./vendor/cannon-es.js'],
@@ -66707,11 +66707,13 @@ function agitateShake(s,dx,dz){
 function endShakeSession(){
   if(!shakeCtx||shakeCtx.settling)return;
   shakeCtx.settling=true;
+  PHYS_STATE.setGravity(0,-55,0); // 手机已静止：恢复标准重力，骰子自然落底
   PHYS_STATE.requestSettle();
   setPhysStat(shakeCtx.roll.trayEl,'落定中…');
 }
-setInterval(function(){ // 停止甩动 1.2 秒后自动结算（给换手势留余量，避免误结算）
-  if(shakeCtx&&!shakeCtx.settling&&Date.now()-shakeCtx.lastShakeAt>1200) endShakeSession();
+setInterval(function(){ // 「手机真的不动」（加速度低于阈值 1.2 秒）才落定结算
+  var quiet = lastMagAt>0 && Date.now()-lastMagAt>1200 && lastMag < (parseInt(sensEl.value,10)||16)*0.6;
+  if(shakeCtx&&!shakeCtx.settling&&quiet) endShakeSession();
 },250);
 function bindShakeDrag(trayEl){ // 桌面端：按住骰盘拖动 = 摇盒
   var st=null;
@@ -66827,13 +66829,14 @@ function createPhysEngine(THREE,CANNON){
   }
 
   /* ---- 骰子资产：几何(带槽位UV贴图) + cannon 凸多面体 + 面法线/点数 ---- */
-  function buildAssets(type,klass){
-    var key=type+'|'+klass;
+  function buildAssets(type,klass,dieScale){
+    dieScale=dieScale||1;
+    var key=type+'|'+klass+'|'+dieScale.toFixed(2);
     if(ASSETS[key]) return ASSETS[key];
     var pd=polyData(type);
     var rmax=0;
     pd.verts.forEach(function(v){ rmax=Math.max(rmax,Math.hypot(v[0],v[1],v[2])); });
-    var sc=DIE/rmax;
+    var sc=DIE*dieScale/rmax;
     var verts=pd.verts.map(function(v){ return [v[0]*sc,v[1]*sc,v[2]*sc]; });
     var faces=pd.faces,n=faces.length,i;
     var normals=[],cents=[];
@@ -66930,21 +66933,6 @@ function createPhysEngine(THREE,CANNON){
     return ASSETS[key];
   }
 
-  /* ---- 按骰子数量自适应：扩大桌面 + 拉远镜头（骰子本体不缩小，数字保持清晰） ---- */
-  function layoutFor(n){
-    var need=n*(2*DIE)*(2*DIE)*1.45; // 每颗骰占位 + 松散系数
-    var k=Math.max(1,Math.sqrt(need/(W0*H0)));
-    W=W0*k; H=H0*k;
-    if(!world||!wallBodies.length)return;
-    wallBodies[0].position.set(0,-H/2-0.5,0);
-    wallBodies[1].position.set(0,H/2+0.5,0);
-    wallBodies[2].position.set(-W/2-0.5,0,0);
-    wallBodies[3].position.set(W/2+0.5,0,0);
-    if(groundMesh)groundMesh.scale.set(k,k,1);
-    camera.position.set(0,9.8*k,8.6*k);
-    camera.lookAt(0,0,-0.4);
-  }
-
   /* ---- 场景 / 物理世界 ---- */
   function ensure(){
     if(renderer) return;
@@ -67023,19 +67011,19 @@ function createPhysEngine(THREE,CANNON){
   function clMag(v,m){ return Math.max(-m,Math.min(m,v)); }
   function spawnDice(specs,throwing,power){
     clearDice();
-    layoutFor(specs.length);
     var n=specs.length;
-    // 横向网格列 + 深度随机铺开 + 低空错高：任何数量都从整张桌面落下，不堆一路
-    var cols=Math.max(4,Math.min(9,Math.floor((W-1)/2.7)));
+    var dieScale=Math.max(0.5,Math.min(1,Math.sqrt(8/Math.max(n,1)))); // 骰子随数量等比缩小（8 颗内全尺寸，25 颗约 0.57）
+    var D2=2.6*dieScale; // 出生间距随骰子等比缩放
+    var cols=Math.max(3,Math.min(9,Math.floor((W-1)/D2)));
     specs.forEach(function(sp,i){
-      var a=buildAssets(sp.sides,sp.kap?'kap':'gen');
+      var a=buildAssets(sp.sides,sp.kap?'kap':'gen',dieScale);
       var mesh=new THREE.Mesh(a.geometry,a.material);
       mesh.castShadow=true; scene.add(mesh);
       var col=i%cols;
       var body=new CANNON.Body({
         mass:1,shape:a.shape,
         position:new CANNON.Vec3(
-          ((col-(cols-1)/2)*2.6)+(Math.random()*0.7-0.35),
+          ((col-(cols-1)/2)*D2)+(Math.random()*D2*0.28-D2*0.14),
           2.2+Math.random()*4.2+Math.floor(i/cols)*0.35,
           -(H/2-1.4)+Math.random()*(H-2.8)),
         linearDamping:0.06,angularDamping:0.08,
@@ -67173,9 +67161,11 @@ function createPhysEngine(THREE,CANNON){
     for(var i=0;i<n;i++) world.step(1/60);
     return 'stepped '+n+' frames -> '+active.map(function(d,i){ return i+':y'+d.body.position.y.toFixed(2)+(d.body.sleepState>0?'(SLEEP)':''); }).join(', ');
   };
+  function setGravity(x,y,z){ if(world) world.gravity.set(x,y,z); }
   return {
     attach:attach, resize:resize, throwDice:throwDice,
     startSession:startSession, agitate:agitate, requestSettle:requestSettle,
+    setGravity:setGravity,
     dom:function(){ return renderer.domElement; }
   };
 }
@@ -67456,34 +67446,55 @@ function disableShake(){
   shakeOn=false; btnShake.classList.remove('on'); btnShake.textContent='📳 摇一摇';
   shakebar.classList.remove('on'); meterFill.style.width='0%';
 }
+/* 真实摇盅模型：手机坐标系 = 盒子坐标系。
+   加速度计读数 = 重力（低频，随手机倾斜旋转）+ 甩动加速度（高频）。
+   每次事件把「旋转后的重力 + 反向甩动惯性力」写进物理引擎的重力向量——
+   等价于一个随手机平移、倾斜的真实盒子，机位固定看盒内。 */
+var gLow=null; // 低通：重力方向（手机系）
+var lastMag=0, lastMagAt=0;
 function onMotion(e){
   var a=e.accelerationIncludingGravity||e.acceleration;
   if(!a||a.x==null) return;
   var now=Date.now();
-  if(lastAcc){
-    var delta=Math.abs(a.x-lastAcc.x)+Math.abs(a.y-lastAcc.y)+Math.abs(a.z-lastAcc.z);
-    meterPend=delta;
-    if(!meterRaf) meterRaf=requestAnimationFrame(function(){
-      meterRaf=0;
-      meterFill.style.width=clamp(meterPend/40*100,0,100)+'%';
-    });
-    var sens=parseInt(sensEl.value,10)||16;
-    if(delta>=sens && !rolling && document.visibilityState==='visible'){
-      if(PHYS_STATE && now-lastTrig>130){ // 真物理：甩手机 = 持续甩盒子（130ms 注入一次冲量，跟手）
-        lastTrig=now;
-        if(!shakeCtx) startShakeSession(clamp(Math.round((delta-sens)/14),0,3));
-        if(shakeCtx&&!shakeCtx.settling){
-          var s=clamp(0.35+(delta-sens)/sens*0.5,0.35,1.6);
-          var dx=clamp(-a.x/10,-1,1), dz=clamp(-a.z/10,-1,1); // 甩动方向映射到盒面
-          agitateShake(s,dx,dz);
-          if(navigator.vibrate)navigator.vibrate(15);
-        }
-      }else if(!PHYS_STATE && now-lastTrig>1200){ // 简化动画回退：甩一下掷一次
-        lastTrig=now;
-        lastPower=clamp(Math.round((delta-sens)/14),0,3);
-        if(navigator.vibrate) navigator.vibrate(35);
-        triggerRoll();
+  if(!gLow) gLow={x:a.x,y:a.y,z:a.z};
+  gLow.x+=(a.x-gLow.x)*0.12; gLow.y+=(a.y-gLow.y)*0.12; gLow.z+=(a.z-gLow.z)*0.12;
+  var lin={x:a.x-gLow.x,y:a.y-gLow.y,z:a.z-gLow.z}; // 高通：甩动（盒子平移加速度）
+  var mag=Math.hypot(lin.x,lin.y,lin.z);
+  lastMag=mag; lastMagAt=now;
+  meterPend=mag*2.4;
+  if(!meterRaf) meterRaf=requestAnimationFrame(function(){
+    meterRaf=0;
+    meterFill.style.width=clamp(meterPend/40*100,0,100)+'%';
+  });
+  // 手机系 -> 盒系映射（竖屏摇骰默认：手机x=盒左右，手机y=盒前后，手机z=盒上下；方向不对改这三个符号/顺序）
+  var gl={x:gLow.x, y:gLow.y, z:gLow.z};
+  var la={x:lin.x, y:lin.y, z:lin.z};
+  var G=55, IG=5.5; // 等效重力强度 / 惯性力增益
+  if(PHYS_STATE && PHYS_STATE.setGravity && shakeCtx && !shakeCtx.settling){
+    var glen=Math.hypot(gl.x,gl.y,gl.z)||1;
+    // 盒内有效重力 = 旋转后的重力（手机倾斜）+ 反向甩动惯性力（盒子平移）
+    PHYS_STATE.setGravity(
+      -gl.x/glen*G - la.x*IG,
+      -gl.y/glen*G - la.y*IG,
+      -gl.z/glen*G - la.z*IG);
+  }
+  var sens=parseInt(sensEl.value,10)||16;
+  var shakeMag=sens*0.9;
+  if(mag>=shakeMag && !rolling && document.visibilityState==='visible'){
+    if(PHYS_STATE && now-lastTrig>130){ // 持续甩动：每次超过阈值注入一次冲量（130ms 跟手）
+      lastTrig=now;
+      if(!shakeCtx) startShakeSession(clamp(Math.round(mag/12),0,3));
+      if(shakeCtx&&!shakeCtx.settling){
+        var s=clamp(0.3+mag/26,0.3,1.5);
+        var dx=clamp(la.x/12,-1,1), dz=clamp(la.y/12,-1,1);
+        agitateShake(s,dx,dz);
+        if(navigator.vibrate)navigator.vibrate(12);
       }
+    }else if(!PHYS_STATE && now-lastTrig>1200){ // 简化动画回退：甩一下掷一次
+      lastTrig=now;
+      lastPower=clamp(Math.round((mag-sens)/14),0,3);
+      if(navigator.vibrate) navigator.vibrate(35);
+      triggerRoll();
     }
   }
   lastAcc={x:a.x,y:a.y,z:a.z};
