@@ -66529,7 +66529,7 @@ function renderTray(trayEl,items){
 }
 
 /* ================= 物理骰子引擎（three.js 渲染 + cannon-es 物理，CDN 动态加载，失败自动回退 CSS 动画） ================= */
-var APP_VER='v1.9';
+var APP_VER='v2.3';
 var PHYS_CDNS=[
   // 同源 vendor 优先：GitHub Pages 部署后无需外网 CDN（file:// 打开时会被 CORS 拦，自动落到下面的 CDN）
   ['./vendor/three.module.js','./vendor/cannon-es.js'],
@@ -66604,7 +66604,8 @@ function mountPhysTray(trayEl,specs,results){
 }
 function paintTag(results,i){
   var r=results[i];
-  r.tag.innerHTML = r._pool ? poolTagHTML(r.v,r._mod,r.kap) : '<b class="t-ok">'+r.v+'</b>';
+  r.tag.innerHTML = r._pool ? poolTagHTML(r.v,r._mod,r.kap)
+    : '<b class="t-ok">'+(r.isTens&&r.v===0?'00':r.v)+(r.isTens?'十位':'')+'</b>';
 }
 function physicalRoll(engine,trayEl,specs,power,results,onDone){
   mountPhysTray(trayEl,specs,results);
@@ -66633,7 +66634,13 @@ function buildActiveRoll(){ // 按当前标签页构建一回合
   var gs=[],tmpl=[];
   parsed.terms.forEach(function(t){
     for(var i=0;i<t.n;i++){
-      if(t.d>=4&&t.d<=20&&gs.length<25){ tmpl.push({die:gs.length}); gs.push({sides:t.d,kap:false}); }
+      if(t.d===100){ // d100 = 两颗十面骰：十位(00-90) + 个位(1-10)，和即 1-100
+        var ti=gs.length; gs.push({sides:10,kap:false,isTens:true,faces:[0,10,20,30,40,50,60,70,80,90]});
+        var ui=gs.length; gs.push({sides:10,kap:false,faces:[1,2,3,4,5,6,7,8,9,10]});
+        tmpl.push({skip:ti}); tmpl.push({skip:ui});
+        tmpl.push({d100sum:[ti,ui],sign:t.sign});
+      }
+      else if(t.d>=4&&t.d<=20&&gs.length<25){ tmpl.push({die:gs.length,sign:t.sign}); gs.push({sides:t.d,kap:false}); }
       else tmpl.push({v:rnd(t.d),d:t.d,sign:t.sign});
     }
   });
@@ -66649,9 +66656,12 @@ function settleDone(){ // 摇盒结算完成：统一收尾
       if(res.every(function(r){return r.v>0;})) evaluatePool(res,cfg);
     }else{
       var vals=c.roll.tmpl.map(function(e){
-        return e.die!=null ? {v:c.roll.results[e.die].v,d:c.roll.specs[e.die].sides,sign:c.roll.specs[e.die].sign}
-                           : {v:e.v,d:e.d,sign:e.sign};
-      });
+        if(e.skip!=null) return null;
+        if(e.die!=null) return {v:c.roll.results[e.die].v,d:c.roll.specs[e.die].sides,sign:e.sign};
+        if(e.d100sum!=null){ var A=c.roll.results[e.d100sum[0]],B=c.roll.results[e.d100sum[1]];
+          return {v:A.v+B.v,d:100,sign:e.sign}; }
+        return {v:e.v,d:e.d,sign:e.sign};
+      }).filter(function(x){return x;});
       showGenResult(c.roll.parsed,vals);
     }
   }
@@ -66666,10 +66676,14 @@ function settleDone(){ // 摇盒结算完成：统一收尾
       var rb=tEl.querySelector('.reshakeBtn');
       if(!rb){
         rb=document.createElement('button'); rb.className='reshakeBtn'; rb.type='button';
-        rb.addEventListener('click',function(){
+        ['pointerdown','pointermove','pointerup','pointercancel'].forEach(function(t){ // 阻断冒泡：避免被骰盘误判为"单击=单发掷骰"
+          rb.addEventListener(t,function(ev){ ev.stopPropagation(); });
+        });
+        rb.addEventListener('click',function(ev){
+          ev.stopPropagation();
           rb.style.display='none';
           enableShakeMotion();
-          shakeStatus('已重新开启 —— 现在甩动手机即开始新一轮摇骰');
+          shakeStatus('摇一摇已重新开启 —— 现在甩动手机即开始新一轮摇骰');
         });
         tEl.appendChild(rb);
       }
@@ -66691,7 +66705,7 @@ function startShakeSession(power){
   rolling=true; rollBtn.disabled=true; lastPower=null;
   mountPhysTray(roll.trayEl,roll.specs,roll.results);
   PHYS_STATE.startSession(roll.specs,{
-    onDie:function(i,v){ roll.results[i].v=v; paintTag(roll.results,i); clack(0.45); },
+    onDie:function(i,v){ roll.results[i].v=v; paintTag(roll.results,i); clack(0.45); }, // tens-aware
     onDone:settleDone
   });
   PHYS_STATE.agitate(0.5+power*0.25,(Math.random()-0.5)*2,(Math.random()-0.5)*2);
@@ -66713,8 +66727,8 @@ function endShakeSession(){
   PHYS_STATE.requestSettle();
   setPhysStat(shakeCtx.roll.trayEl,'落定中…');
 }
-setInterval(function(){ // 「手机真的不动」= 距上次超过摇动阈值已 1.2 秒，且当前加速度很低
-  var quiet = lastLoudAt>0 && Date.now()-lastLoudAt>1200 && lastMag < (parseInt(sensEl.value,10)||10)*0.6;
+setInterval(function(){ // 「手机真的不动」= 距上次明显运动（>2.6 m/s²）已 1.2 秒。持续甩动（任何幅度）永不误结算
+  var quiet = lastActiveAt>0 && Date.now()-lastActiveAt>1200 && lastMag < 2.6;
   if(shakeCtx&&!shakeCtx.settling&&quiet) endShakeSession();
 },250);
 function bindShakeDrag(trayEl){ // 桌面端：按住骰盘拖动 = 摇盒
@@ -66810,17 +66824,20 @@ function createPhysEngine(THREE,CANNON){
     }else if(type===8){
       out={v:[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]],
            f:[[0,2,4],[0,4,3],[0,3,5],[0,5,2],[1,4,2],[1,3,4],[1,5,3],[1,2,5]]};
-    }else if(type===10){ // 五角梯面体：五边形反棱柱的对偶
+    }else if(type===10){ // 五角梯面体：五边形反棱柱的对偶（反棱柱须含上下五边形面，对偶拓扑才正确）
       var av=[],af=[],k;
       for(k=0;k<5;k++){
         var a1=2*Math.PI*k/5;
-        av.push([Math.cos(a1),0.62,Math.sin(a1)]);
-        av.push([Math.cos(a1+Math.PI/5),-0.62,Math.sin(a1+Math.PI/5)]);
+        av.push([Math.cos(a1),0.28,Math.sin(a1)]);
+        av.push([Math.cos(a1+Math.PI/5),-0.28,Math.sin(a1+Math.PI/5)]);
       }
       for(k=0;k<5;k++){
         var r1=2*k,s1=2*k+1,r2=2*((k+1)%5),s2=2*((k+1)%5)+1;
         af.push([r1,s1,r2]); af.push([s1,s2,r2]);
       }
+      var topF=[],botF=[];
+      for(k=0;k<5;k++){ topF.push(2*k); botF.push(2*k+1); }
+      af.push(topF); af.push(botF);
       out=dual({v:av,f:af});
     }else if(type===12){
       out=dual(ico());
@@ -66831,9 +66848,9 @@ function createPhysEngine(THREE,CANNON){
   }
 
   /* ---- 骰子资产：几何(带槽位UV贴图) + cannon 凸多面体 + 面法线/点数 ---- */
-  function buildAssets(type,klass,dieScale){
+  function buildAssets(type,klass,dieScale,faceValues){
     dieScale=dieScale||1;
-    var key=type+'|'+klass+'|'+dieScale.toFixed(2);
+    var key=type+'|'+klass+'|'+dieScale.toFixed(2)+'|'+(faceValues?faceValues.join(','):'');
     if(ASSETS[key]) return ASSETS[key];
     var pd=polyData(type);
     var rmax=0;
@@ -66855,12 +66872,16 @@ function createPhysEngine(THREE,CANNON){
       }
       return f.slice();
     });
-    // 点数分配：中心对称面配对，对面和 = n+1（d4 直接顺序）
-    var values=new Array(n);
-    if(type===4){ for(i=0;i<n;i++)values[i]=i+1; }
+    // 点数分配：默认中心对称面配对（对面和=n+1）；d100 专用骰使用自定义面值
+    var values;
+    if(faceValues&&faceValues.length===n){ values=faceValues.slice(); }
     else{
-      var order=normals.map(function(_,k){return k;}).sort(function(a,b){return normals[b][1]-normals[a][1];});
-      for(i=0;i<n/2;i++){ values[order[i]]=n-i; values[order[n-1-i]]=i+1; }
+      values=new Array(n);
+      if(type===4){ for(i=0;i<n;i++)values[i]=i+1; }
+      else{
+        var order=normals.map(function(_,k){return k;}).sort(function(a,b){return normals[b][1]-normals[a][1];});
+        for(i=0;i<n/2;i++){ values[order[i]]=n-i; values[order[n-1-i]]=i+1; }
+      }
     }
     // three.js 几何：每面扇形三角化 + 面内切向基投影出 UV（圆形槽位互不重叠）
     var cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols);
@@ -66894,33 +66915,23 @@ function createPhysEngine(THREE,CANNON){
     geo.setAttribute('position',new THREE.Float32BufferAttribute(posArr,3));
     geo.setAttribute('normal',new THREE.Float32BufferAttribute(nrmArr,3));
     geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvArr,2));
-    // 贴图：网格槽位上画数字（d6 画点数）
+    // 贴图：网格槽位上统一画数字（所有骰种同风格）
     var cvs=document.createElement('canvas'); cvs.width=1024; cvs.height=1024;
     var ctx=cvs.getContext('2d');
-    var d6=(type===6);
-    var th=d6?{bg:'#f2ede2',fg:'#26201d'}
-            :klass==='kap'?{bg:'#3a2d17',fg:'#e8b34b'}
+    var th=klass==='kap'?{bg:'#3a2d17',fg:'#e8b34b'}
             :klass==='gen'?{bg:'#2e231c',fg:'#ff9d7a'}
             :{bg:'#2e2423',fg:'#ff6f72'};
     ctx.fillStyle=th.bg; ctx.fillRect(0,0,1024,1024);
     var cell=Math.min(1024/cols,1024/rows);
     faces.forEach(function(f,fi){
       var cx=((fi%cols)+0.5)*1024/cols, cy=(Math.floor(fi/cols)+0.5)*1024/rows;
-      if(d6){
-        var PIPS={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
-        ctx.fillStyle=th.fg;
-        PIPS[values[fi]].forEach(function(p){
-          var px=cx+((p%3)-1)*cell*0.26, py=cy+(Math.floor(p/3)-1)*cell*0.26;
-          ctx.beginPath(); ctx.arc(px,py,cell*0.085,0,7); ctx.fill();
-        });
-      }else{
-        ctx.strokeStyle='rgba(255,255,255,0.09)'; ctx.lineWidth=3;
-        ctx.beginPath(); ctx.arc(cx,cy,cell*0.34,0,7); ctx.stroke();
-        ctx.fillStyle=th.fg;
-        ctx.font='700 '+Math.floor(cell*0.30)+'px "Segoe UI",Arial,sans-serif';
-        ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText(String(values[fi]),cx,cy+cell*0.02);
-      }
+      ctx.strokeStyle='rgba(255,255,255,0.09)'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(cx,cy,cell*0.34,0,7); ctx.stroke();
+      ctx.fillStyle=th.fg;
+      ctx.font='700 '+Math.floor(cell*0.30)+'px "Segoe UI",Arial,sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      var label=(faceValues&&faceValues[fi]===0)?'00':String(values[fi]); // d100 十位骰 0 显示为 00
+      ctx.fillText(label,cx,cy+cell*0.02);
     });
     var tex=new THREE.CanvasTexture(cvs);
     if(THREE.SRGBColorSpace) tex.colorSpace=THREE.SRGBColorSpace;
@@ -67023,7 +67034,7 @@ function createPhysEngine(THREE,CANNON){
     var D2=2.6*dieScale; // 出生间距随骰子等比缩放
     var cols=Math.max(3,Math.min(9,Math.floor((W-1)/D2)));
     specs.forEach(function(sp,i){
-      var a=buildAssets(sp.sides,sp.kap?'kap':'gen',dieScale);
+      var a=buildAssets(sp.sides,sp.kap?'kap':'gen',dieScale,sp.faces);
       var mesh=new THREE.Mesh(a.geometry,a.material);
       mesh.castShadow=true; scene.add(mesh);
       var col=i%cols;
@@ -67352,7 +67363,13 @@ function rollGeneric(){
   var specs=[],tmpl=[];
   parsed.terms.forEach(function(t){
     for(var i=0;i<t.n;i++){
-      if(t.d>=4&&t.d<=20&&specs.length<25){ tmpl.push({die:specs.length}); specs.push({sides:t.d,kap:false}); }
+      if(t.d===100){
+        var ti=specs.length; specs.push({sides:10,kap:false,isTens:true,faces:[0,10,20,30,40,50,60,70,80,90]});
+        var ui=specs.length; specs.push({sides:10,kap:false,faces:[1,2,3,4,5,6,7,8,9,10]});
+        tmpl.push({skip:ti}); tmpl.push({skip:ui});
+        tmpl.push({d100sum:[ti,ui],sign:t.sign});
+      }
+      else if(t.d>=4&&t.d<=20&&specs.length<25){ tmpl.push({die:specs.length,sign:t.sign}); specs.push({sides:t.d,kap:false}); }
       else tmpl.push({v:rnd(t.d),d:t.d,sign:t.sign});
     }
   });
@@ -67362,9 +67379,19 @@ function rollGeneric(){
   var finishGen=function(){
     try{
       var vals=tmpl.map(function(e){
-        return e.die!=null ? {v:results[e.die].v,d:specs[e.die].sides,sign:specs[e.die].sign}
-                           : {v:e.v,d:e.d,sign:e.sign};
-      });
+        if(e.skip!=null) return null;
+        if(e.die!=null){
+          var rr=results[e.die];
+          if(!rr){ (window._physErr=window._physErr||[]).push('DIE idx '+e.die+' missing, results len='+(results&&results.length)); return {v:0,d:20,sign:e.sign}; }
+          return {v:rr.v,d:specs[e.die].sides,sign:e.sign};
+        }
+        if(e.d100sum!=null){
+          var A=results[e.d100sum[0]],B=results[e.d100sum[1]];
+          if(!A||!B){ (window._physErr=window._physErr||[]).push('D100 idx '+e.d100sum[0]+'/'+e.d100sum[1]+' missing, len='+(results&&results.length)); return {v:0,d:100,sign:e.sign}; }
+          return {v:A.v+B.v,d:100,sign:e.sign};
+        }
+        return {v:e.v,d:e.d,sign:e.sign};
+      }).filter(function(x){return x;});
       showGenResult(parsed,vals);
     }
     finally{
@@ -67378,7 +67405,7 @@ function rollGeneric(){
     rolling=false; rollBtn.disabled=false; updateRollLabel();
     return;
   }
-  var results=specs.map(function(s){ return {v:0,kap:false,_pool:false,sides:s.sides,sign:s.sign}; });
+  var results=specs.map(function(s){ return {v:0,kap:false,_pool:false,sides:s.sides,sign:s.sign,isTens:!!s.isTens}; });
   launchDice($('#genTray'),specs,power,results,finishGen,'gen');
 }
 function showGenResult(p,vals){
@@ -67485,7 +67512,7 @@ window.__impactSound=function(vol){ // 骰子真实碰撞事件回调（引擎 c
    每次事件把「旋转后的重力 + 反向甩动惯性力」写进物理引擎的重力向量——
    等价于一个随手机平移、倾斜的真实盒子，机位固定看盒内。 */
 var gLow=null; // 低通：重力方向（手机系）
-var lastMag=0, lastMagAt=0, lastLoudAt=0; // lastLoudAt：最近一次超过摇动阈值的时间
+var lastMag=0, lastMagAt=0, lastActiveAt=0; // lastActiveAt：最近一次"明显运动"（>2.6 m/s²）时间
 var bfDir=null, boxOff=null; // 盒框视觉平滑状态
 function onMotion(e){
   var a=e.accelerationIncludingGravity||e.acceleration;
@@ -67525,10 +67552,9 @@ function onMotion(e){
     var oz=Math.abs(boxOff.z)<0.5?0:clamp(boxOff.z,-1.4,1.4);
     PHYS_STATE.setBoxFrame(bfDir.x, bfDir.z, -bfDir.y, ox, 0, oz);
   }
-  var sens=parseInt(sensEl.value,10)||10;
-  var shakeMag=sens*0.9;
-  if(mag>=shakeMag) lastLoudAt=now;
-  if(mag>=shakeMag && !rolling && document.visibilityState==='visible'){
+  var TRIG=parseInt(sensEl.value,10)||10; // 触发阈值（灵敏度滑条）
+  if(mag>2.6) lastActiveAt=now; // 明显运动：持续甩动期间永不进入"静止"判定
+  if(mag>=TRIG && !rolling && document.visibilityState==='visible'){
     if(PHYS_STATE && now-lastTrig>130){ // 持续甩动：每次超过阈值注入一次冲量（130ms 跟手）
       lastTrig=now;
       if(!shakeCtx) startShakeSession(clamp(Math.round(mag/10),0,3));
@@ -67540,7 +67566,7 @@ function onMotion(e){
       }
     }else if(!PHYS_STATE && now-lastTrig>1200){ // 简化动画回退：甩一下掷一次
       lastTrig=now;
-      lastPower=clamp(Math.round((mag-sens)/14),0,3);
+      lastPower=clamp(Math.round((mag-TRIG)/14),0,3);
       if(navigator.vibrate) navigator.vibrate(35);
       triggerRoll();
     }
