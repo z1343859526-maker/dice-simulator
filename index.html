@@ -551,7 +551,11 @@ function settleDone(){ // 摇盒结算完成：统一收尾
   }
   finally{
     rolling=false; rollBtn.disabled=false; updateRollLabel();
+    var tEl=c?c.roll.trayEl:null;
+    var wasShaking=shakeOn;
+    if(wasShaking) disableShake(); // 出结果后自动关闭摇一摇：结果定格，小幅晃动不会误开新一轮
     shakeCtx=null;
+    if(tEl&&wasShaking) setPhysStat(tEl,'结果已定格 · 摇一摇已自动关闭，再点「📳」开始下一轮');
   }
 }
 function startShakeSession(power){
@@ -875,7 +879,7 @@ function createPhysEngine(THREE,CANNON){
     active=[];
   }
   /* ---- 回合管理：mode = 单发抛掷(throw) 或 持续摇盒(session) ---- */
-  var mode=null,lastLoop=0;
+  var mode=null,lastLoop=0,stepErrCount=0,lastStepTime=0;
   function ensureLoop(){ if(!raf) loopFrame(); }
   function stopLoop(){ if(raf){ cancelAnimationFrame(raf); raf=0; } }
   function clMag(v,m){ return Math.max(-m,Math.min(m,v)); }
@@ -955,13 +959,19 @@ function createPhysEngine(THREE,CANNON){
     if(!dx&&!dz){ dx=(Math.random()-0.5)*2; dz=(Math.random()-0.5)*2; }
     active.forEach(function(d){
       var v=d.body.velocity,w=d.body.angularVelocity;
-      v.x=clMag(v.x+dx*(5+13*s)+(Math.random()-0.5)*2.5,26);
-      v.y=Math.min(v.y+(2.5+7*s),15);
-      v.z=clMag(v.z+dz*(5+13*s)+(Math.random()-0.5)*2.5,26);
-      var j=10+22*s;
-      w.x=clMag(w.x+(Math.random()-0.5)*j,30);
-      w.y=clMag(w.y+(Math.random()-0.5)*j,30);
-      w.z=clMag(w.z+(Math.random()-0.5)*j,30);
+      // NaN 防护：偶发数值发散时重置该骰，避免污染整个物理世界
+      if(!isFinite(v.x+v.y+v.z+w.x+w.y+w.z)||!isFinite(d.body.position.x+d.body.position.y+d.body.position.z)){
+        v.set(0,2,0); w.set(0,0,0);
+        d.body.position.set((Math.random()-0.5)*4,4,(Math.random()-0.5)*2);
+        return;
+      }
+      v.x=clMag(v.x+dx*(4+9*s)+(Math.random()-0.5)*1.6,13);
+      v.y=Math.min(v.y+(2+5.5*s),8.5);
+      v.z=clMag(v.z+dz*(4+9*s)+(Math.random()-0.5)*1.6,13);
+      var j=7+14*s;
+      w.x=clMag(w.x+(Math.random()-0.5)*j,16);
+      w.y=clMag(w.y+(Math.random()-0.5)*j,16);
+      w.z=clMag(w.z+(Math.random()-0.5)*j,16);
     });
   }
   /* 停止甩动 → 进入落定阶段 */
@@ -974,11 +984,20 @@ function createPhysEngine(THREE,CANNON){
   function loopFrame(){
     raf=requestAnimationFrame(loopFrame);
     lastLoop=performance.now();
-    try{ world.step(1/60); }
-    catch(e){
-      (window._physErr=window._physErr||[]).push('STEP: '+String(e&&e.message||e));
-      finishActive(); return;
+    var nowStep=performance.now();
+    try{
+      world.step(1/60,Math.min((nowStep-lastStepTime)/1000,0.1),4);
+      stepErrCount=0;
     }
+    catch(e){
+      // 高速碰撞偶发数值错误：跳过本帧继续渲染，连续 12 帧异常才强制结算
+      stepErrCount++;
+      (window._physErr=window._physErr||[]).push('STEP'+stepErrCount+': '+String(e&&e.message||e));
+      if(stepErrCount>12){ finishActive(); return; }
+      renderer.render(scene,camera);
+      return;
+    }
+    lastStepTime=nowStep;
     active.forEach(sync);
     renderer.render(scene,camera);
     if(!mode)return;
@@ -1279,6 +1298,12 @@ function shakeStatus(msg,warn){
   shakeStatusEl.textContent=msg;
   shakeStatusEl.className=warn?'warn':'';
 }
+function disableShake(){
+  if(!shakeOn)return;
+  window.removeEventListener('devicemotion',onMotion);
+  shakeOn=false; btnShake.classList.remove('on'); btnShake.textContent='📳 摇一摇';
+  shakebar.classList.remove('on'); meterFill.style.width='0%';
+}
 function onMotion(e){
   var a=e.accelerationIncludingGravity||e.acceleration;
   if(!a||a.x==null) return;
@@ -1313,12 +1338,7 @@ function onMotion(e){
 }
 btnShake.addEventListener('click',function(){
   ensureAC();
-  if(shakeOn){ // 关闭
-    window.removeEventListener('devicemotion',onMotion);
-    shakeOn=false; btnShake.classList.remove('on'); btnShake.textContent='📳 摇一摇';
-    shakebar.classList.remove('on'); meterFill.style.width='0%';
-    return;
-  }
+  if(shakeOn){ disableShake(); return; }
   if(typeof DeviceMotionEvent==='undefined'){
     shakeStatus('此设备/浏览器不支持运动传感器（桌面端请用按钮或空格键）',true);
     return;
