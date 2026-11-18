@@ -3,6 +3,13 @@
 单文件网页骰子工具，为《Marxist Vampire Killers》备团定制，也内置通用掷骰模式。
 **零依赖、零构建**——整个工具就是一个 `index.html`，双击即用，离线可用。
 
+## 在线地址（已部署）
+
+| 入口 | 地址 | 摇一摇 | 依赖 |
+|---|---|---|---|
+| **GitHub Pages（推荐）** | https://z1343859526-maker.github.io/dice-simulator/ | ✅ 可用 | 无，任何设备随时访问（扫码见 `qr-github-pages.png`） |
+| 局域网 | http://192.168.10.3:8123 | ❌ 不可用（HTTP 非安全上下文） | 电脑开机且运行着 `python -m http.server 8123`（扫码见 `qr-lan.png`） |
+
 ## 功能一览
 
 ### 骰池检定（MVK 规则，d20 骰池）
